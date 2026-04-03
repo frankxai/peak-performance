@@ -54,49 +54,109 @@ class PeakPerformanceTray:
     # ─── Icon Generation ────────────────────────────────────────
 
     def _create_icon(self, text: str, color: tuple) -> Image.Image:
-        """Create a 64x64 icon: colored circle with score text."""
+        """Create a beautiful 64x64 icon with gradient ring, inner glow, and score."""
         size = 64
-        img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+        # Render at 2x then downscale for anti-aliasing
+        hires = size * 2
+        img = Image.new('RGBA', (hires, hires), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
+        cx, cy = hires // 2, hires // 2
 
-        # Draw filled circle
-        margin = 2
+        # Outer glow — soft colored aura
+        for radius_offset in range(12, 0, -1):
+            alpha = int(25 * (1 - radius_offset / 12))
+            r = cx - 4 + radius_offset
+            draw.ellipse(
+                [cx - r, cy - r, cx + r, cy + r],
+                fill=(*color, alpha),
+            )
+
+        # Dark background circle
+        r_bg = cx - 8
         draw.ellipse(
-            [margin, margin, size - margin, size - margin],
-            fill=(*color, 240),
-            outline=(255, 255, 255, 200),
-            width=2,
+            [cx - r_bg, cy - r_bg, cx + r_bg, cy + r_bg],
+            fill=(20, 22, 30, 245),
         )
 
-        # Draw text centered
-        # Try to get a clean font; fall back to default
-        font = None
-        font_size = 26 if len(text) <= 2 else 20
-        try:
-            # Try common Windows fonts
-            for font_name in ['arialbd.ttf', 'arial.ttf', 'segoeui.ttf', 'calibrib.ttf']:
-                try:
-                    font = ImageFont.truetype(font_name, font_size)
-                    break
-                except OSError:
-                    continue
-        except Exception:
-            pass
+        # Gradient ring — draw concentric arcs from dark to bright
+        ring_width = 8
+        for i in range(ring_width):
+            t = i / ring_width
+            # Interpolate from dim version of color to full brightness
+            rc = int(color[0] * (0.3 + 0.7 * t))
+            gc = int(color[1] * (0.3 + 0.7 * t))
+            bc = int(color[2] * (0.3 + 0.7 * t))
+            r_ring = r_bg - i
+            draw.ellipse(
+                [cx - r_ring, cy - r_ring, cx + r_ring, cy + r_ring],
+                outline=(rc, gc, bc, 220),
+                width=2,
+            )
 
+        # Inner subtle fill — very dark with a hint of color
+        r_inner = r_bg - ring_width - 2
+        draw.ellipse(
+            [cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner],
+            fill=(
+                15 + color[0] // 20,
+                17 + color[1] // 20,
+                25 + color[2] // 20,
+                240,
+            ),
+        )
+
+        # Score text — large, bold, centered
+        font = None
+        font_size = (52 if len(text) <= 2 else 40)
+        for font_name in ['seguisb.ttf', 'arialbd.ttf', 'calibrib.ttf', 'segoeui.ttf']:
+            try:
+                font = ImageFont.truetype(font_name, font_size)
+                break
+            except OSError:
+                continue
         if font is None:
             font = ImageFont.load_default()
 
-        # Center text
         bbox = draw.textbbox((0, 0), text, font=font)
         tw = bbox[2] - bbox[0]
         th = bbox[3] - bbox[1]
-        tx = (size - tw) // 2
-        ty = (size - th) // 2 - 2
+        tx = (hires - tw) // 2
+        ty = (hires - th) // 2 - 4
 
-        # Draw text shadow then text
-        draw.text((tx + 1, ty + 1), text, fill=(0, 0, 0, 180), font=font)
-        draw.text((tx, ty), text, fill=(255, 255, 255, 255), font=font)
+        # Text glow
+        for dx, dy in [(-1, -1), (-1, 1), (1, -1), (1, 1), (0, -2), (0, 2), (-2, 0), (2, 0)]:
+            draw.text((tx + dx, ty + dy), text, fill=(*color, 60), font=font)
 
+        # Text shadow
+        draw.text((tx + 2, ty + 2), text, fill=(0, 0, 0, 200), font=font)
+        # Main text — white with slight color tint
+        text_color = (
+            min(255, 230 + color[0] // 25),
+            min(255, 235 + color[1] // 25),
+            min(255, 240 + color[2] // 25),
+            255,
+        )
+        draw.text((tx, ty), text, fill=text_color, font=font)
+
+        # Small grade letter at bottom
+        if hasattr(self, 'grade_str') and self.grade_str and self.grade_str != '?':
+            grade_font_size = 18
+            grade_font = None
+            for font_name in ['seguisb.ttf', 'arialbd.ttf', 'segoeui.ttf']:
+                try:
+                    grade_font = ImageFont.truetype(font_name, grade_font_size)
+                    break
+                except OSError:
+                    continue
+            if grade_font:
+                gb = draw.textbbox((0, 0), self.grade_str, font=grade_font)
+                gw = gb[2] - gb[0]
+                gx = (hires - gw) // 2
+                gy = hires - 28
+                draw.text((gx, gy), self.grade_str, fill=(*color, 200), font=grade_font)
+
+        # Downscale with high-quality resampling
+        img = img.resize((size, size), Image.LANCZOS)
         return img
 
     def _get_grade_color(self, g: str) -> tuple:
@@ -104,26 +164,54 @@ class PeakPerformanceTray:
 
     # ─── Menu ───────────────────────────────────────────────────
 
+    def _gate_label(self, gid: str) -> str:
+        """Get display name for a gate based on theme."""
+        info = GATE_NAMES.get(gid, {})
+        if self.theme == 'arcanea':
+            return f"{info.get('gate', gid)} ({info.get('guardian', '')})"
+        return info.get('plain', gid)
+
+    def _gate_bar(self, score: int) -> str:
+        """Visual score bar: ████░░░░░░ 6/10"""
+        filled = '█' * score
+        empty = '░' * (10 - score)
+        return f'{filled}{empty} {score}/10'
+
     def _build_menu(self) -> pystray.Menu:
+        # Dynamic gate submenu
+        def gate_items():
+            items = []
+            for gid in ['disk', 'memory', 'cpu', 'processes', 'git',
+                        'secrets', 'workspace', 'knowledge', 'agents', 'system']:
+                score = self.gates.get(gid, 0)
+                label = f'{self._gate_label(gid):28s}  {self._gate_bar(score)}'
+                items.append(pystray.MenuItem(label, None, enabled=False))
+            return items
+
         return pystray.Menu(
             pystray.MenuItem(
-                lambda _: f'Score: {self.score}/{self.grade_str}',
+                lambda _: f'⚡ Score: {self.score}/100  |  Grade: {self.grade_str}',
                 None,
                 enabled=False,
             ),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem('Full Audit', self._on_full_audit),
-            pystray.MenuItem('Snapshot', self._on_snapshot),
-            pystray.MenuItem('Fix Issues', self._on_fix),
+            pystray.MenuItem(
+                'Gate Scores',
+                pystray.Menu(lambda: gate_items()),
+            ),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem('View Trend', self._on_trend),
-            pystray.MenuItem('Open History', self._on_open_history),
+            pystray.MenuItem('Full Audit', self._on_full_audit),
+            pystray.MenuItem('Snapshot (screens + metrics)', self._on_snapshot),
+            pystray.MenuItem('Auto-Fix Issues', self._on_fix),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('View Trend History', self._on_trend),
+            pystray.MenuItem('Open History File', self._on_open_history),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
-                lambda _: f"Theme: {'Arcanea' if self.theme == 'arcanea' else 'Plain'}",
+                lambda _: f"Theme: {'⚔ Arcanea' if self.theme == 'arcanea' else '○ Plain'}",
                 self._on_toggle_theme,
             ),
-            pystray.MenuItem('Refresh Now', self._on_refresh),
+            pystray.MenuItem('↻ Refresh Now', self._on_refresh),
             pystray.MenuItem('Quit', self._on_quit),
         )
 
@@ -140,16 +228,16 @@ class PeakPerformanceTray:
             pass
 
     def _on_full_audit(self, icon, item):
-        self._open_terminal('npx @arcanea/peak-performance audit')
+        self._open_terminal('npx tsx packages/peak-performance/src/cli.ts audit')
 
     def _on_snapshot(self, icon, item):
-        self._open_terminal('npx @arcanea/peak-performance snapshot')
+        self._open_terminal('npx tsx packages/peak-performance/src/cli.ts snapshot')
 
     def _on_fix(self, icon, item):
-        self._open_terminal('npx @arcanea/peak-performance fix')
+        self._open_terminal('npx tsx packages/peak-performance/src/cli.ts fix')
 
     def _on_trend(self, icon, item):
-        self._open_terminal('npx @arcanea/peak-performance trend')
+        self._open_terminal('npx tsx packages/peak-performance/src/cli.ts trend')
 
     def _on_open_history(self, icon, item):
         """Open history.json in the default editor."""
@@ -190,13 +278,29 @@ class PeakPerformanceTray:
             self.claude_count = probes['processes']['claudeCount']
             self.disk_free_gb = probes['disk']['freeGB']
 
-            # Update tooltip
+            # Update tooltip — rich multi-line summary
             mem_free_gb = round(self.mem_free_mb / 1024, 1)
+            # Gate summary: show worst gates first
+            gate_summary = ''
+            if self.gates:
+                worst = sorted(self.gates.items(), key=lambda x: x[1])[:3]
+                labels = GATE_NAMES if self.theme == 'arcanea' else None
+                parts = []
+                for gid, gscore in worst:
+                    if gscore < 8:
+                        name = GATE_NAMES.get(gid, {}).get(
+                            'guardian' if self.theme == 'arcanea' else 'plain', gid
+                        )
+                        parts.append(f'{name}:{gscore}')
+                if parts:
+                    gate_summary = f' | {", ".join(parts)}'
+
             self.tooltip = (
-                f'PP {self.score}/{self.grade_str} | '
-                f'{mem_free_gb}GB free | '
-                f'{self.claude_count} Claude | '
-                f'{self.disk_free_gb}GB disk'
+                f'Peak Performance {self.score}/{self.grade_str}'
+                f'{gate_summary}\n'
+                f'RAM: {mem_free_gb}GB free | '
+                f'Disk: {self.disk_free_gb}GB | '
+                f'Claude: {self.claude_count}'
             )
 
             # Save to history
