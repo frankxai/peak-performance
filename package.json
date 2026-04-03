@@ -1,0 +1,47 @@
+{
+  "name": "@arcanea/peak-performance",
+  "version": "0.1.0",
+  "description": "System health auditor for AI-powered development machines. Ten Gate scoring framework maps machine metrics to creative capacity.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "pp": "dist/cli.js",
+    "peak-performance": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --test src/**/*.test.ts",
+    "lint": "tsc --noEmit",
+    "pp": "tsx src/cli.ts",
+    "pp:audit": "tsx src/cli.ts audit",
+    "pp:fix": "tsx src/cli.ts fix",
+    "pp:trend": "tsx src/cli.ts trend",
+    "pp:mcp": "tsx src/integrations/mcp-server/index.ts"
+  },
+  "keywords": [
+    "performance",
+    "system-health",
+    "ai-development",
+    "developer-tools",
+    "mcp",
+    "claude-code",
+    "cursor",
+    "codex",
+    "arcanea"
+  ],
+  "author": "FrankX <frank@arcanea.ai>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arcanea-ai/peak-performance"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0"
+  }
+}
