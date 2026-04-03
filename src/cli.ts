@@ -9,10 +9,12 @@
  *   pp trend           Show score history
  *   pp fix             Run auto-fixes
  *   pp compact         One-line status for hooks/statusline
+ *   pp snapshot        Screenshot + audit bundle (archived)
  */
 import { runAudit } from './core/audit.js';
 import { TrendTracker } from './history/tracker.js';
 import { runAllFixes } from './fixes/autofix.js';
+import { takeSnapshot } from './core/snapshot.js';
 import { formatAudit, formatTrend, formatCompact, formatJson, formatMarkdown } from './format/terminal.js';
 import { resolve } from 'node:path';
 
@@ -87,6 +89,17 @@ switch (command) {
     break;
   }
 
+  case 'snapshot': {
+    const notes = args.slice(1).join(' ') || undefined;
+    console.log('\n  Taking snapshot (audit + screenshots)...\n');
+    const result = takeSnapshot(process.cwd(), notes);
+    console.log(formatAudit(result.audit, theme));
+    console.log(`  Screenshots: ${result.screenshots.length} captured`);
+    console.log(`  Saved to: ${result.dir}`);
+    console.log(`  Bundle: ${result.snapshotFile}\n`);
+    break;
+  }
+
   default:
     console.log(`
   Peak Performance — System health for AI-powered machines
@@ -96,5 +109,6 @@ switch (command) {
     pp trend [N]                     Show last N score entries
     pp fix                           Run auto-fixes
     pp compact                       One-line status
+    pp snapshot [notes]              Screenshot + audit archive bundle
 `);
 }

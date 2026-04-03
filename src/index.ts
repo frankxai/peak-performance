@@ -40,6 +40,9 @@ export { detectAgents, agentLoadSummary } from './agents/detector.js';
 // History
 export { TrendTracker } from './history/tracker.js';
 
+// Snapshots
+export { takeSnapshot } from './core/snapshot.js';
+
 // Fixes
 export { runAllFixes, cleanNpmCache, cleanTempFiles, applyFix } from './fixes/autofix.js';
 
