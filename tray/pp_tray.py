@@ -54,61 +54,37 @@ class PeakPerformanceTray:
     # ─── Icon Generation ────────────────────────────────────────
 
     def _create_icon(self, text: str, color: tuple) -> Image.Image:
-        """Create a beautiful 64x64 icon with gradient ring, inner glow, and score."""
+        """Create a crisp 64x64 tray icon optimized for 16-24px display.
+
+        Design: solid colored background with bold white score.
+        Renders at 4x (256px) then downscales for maximum clarity.
+        At system tray size (16-24px), simplicity wins over complexity.
+        """
         size = 64
-        # Render at 2x then downscale for anti-aliasing
-        hires = size * 2
+        hires = size * 4  # 256px for sharp downscale
         img = Image.new('RGBA', (hires, hires), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
         cx, cy = hires // 2, hires // 2
+        radius = cx - 8
 
-        # Outer glow — soft colored aura
-        for radius_offset in range(12, 0, -1):
-            alpha = int(25 * (1 - radius_offset / 12))
-            r = cx - 4 + radius_offset
-            draw.ellipse(
-                [cx - r, cy - r, cx + r, cy + r],
-                fill=(*color, alpha),
-            )
-
-        # Dark background circle
-        r_bg = cx - 8
+        # 1. Solid colored circle — reads clearly at any size
         draw.ellipse(
-            [cx - r_bg, cy - r_bg, cx + r_bg, cy + r_bg],
-            fill=(20, 22, 30, 245),
+            [cx - radius, cy - radius, cx + radius, cy + radius],
+            fill=(*color, 255),
         )
 
-        # Gradient ring — draw concentric arcs from dark to bright
-        ring_width = 8
-        for i in range(ring_width):
-            t = i / ring_width
-            # Interpolate from dim version of color to full brightness
-            rc = int(color[0] * (0.3 + 0.7 * t))
-            gc = int(color[1] * (0.3 + 0.7 * t))
-            bc = int(color[2] * (0.3 + 0.7 * t))
-            r_ring = r_bg - i
-            draw.ellipse(
-                [cx - r_ring, cy - r_ring, cx + r_ring, cy + r_ring],
-                outline=(rc, gc, bc, 220),
-                width=2,
-            )
-
-        # Inner subtle fill — very dark with a hint of color
-        r_inner = r_bg - ring_width - 2
+        # 2. Thin dark inner border for depth
+        inner_r = radius - 6
         draw.ellipse(
-            [cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner],
-            fill=(
-                15 + color[0] // 20,
-                17 + color[1] // 20,
-                25 + color[2] // 20,
-                240,
-            ),
+            [cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r],
+            outline=(0, 0, 0, 80),
+            width=3,
         )
 
-        # Score text — large, bold, centered
+        # 3. Score number — large, bold, white, maximum contrast
         font = None
-        font_size = (52 if len(text) <= 2 else 40)
-        for font_name in ['seguisb.ttf', 'arialbd.ttf', 'calibrib.ttf', 'segoeui.ttf']:
+        font_size = 130 if len(text) <= 2 else 105
+        for font_name in ['arialbd.ttf', 'seguisb.ttf', 'calibrib.ttf', 'arial.ttf']:
             try:
                 font = ImageFont.truetype(font_name, font_size)
                 break
@@ -121,41 +97,14 @@ class PeakPerformanceTray:
         tw = bbox[2] - bbox[0]
         th = bbox[3] - bbox[1]
         tx = (hires - tw) // 2
-        ty = (hires - th) // 2 - 4
+        ty = (hires - th) // 2 - 8
 
-        # Text glow
-        for dx, dy in [(-1, -1), (-1, 1), (1, -1), (1, 1), (0, -2), (0, 2), (-2, 0), (2, 0)]:
-            draw.text((tx + dx, ty + dy), text, fill=(*color, 60), font=font)
+        # Drop shadow for legibility
+        draw.text((tx + 4, ty + 4), text, fill=(0, 0, 0, 160), font=font)
+        # White text
+        draw.text((tx, ty), text, fill=(255, 255, 255, 255), font=font)
 
-        # Text shadow
-        draw.text((tx + 2, ty + 2), text, fill=(0, 0, 0, 200), font=font)
-        # Main text — white with slight color tint
-        text_color = (
-            min(255, 230 + color[0] // 25),
-            min(255, 235 + color[1] // 25),
-            min(255, 240 + color[2] // 25),
-            255,
-        )
-        draw.text((tx, ty), text, fill=text_color, font=font)
-
-        # Small grade letter at bottom
-        if hasattr(self, 'grade_str') and self.grade_str and self.grade_str != '?':
-            grade_font_size = 18
-            grade_font = None
-            for font_name in ['seguisb.ttf', 'arialbd.ttf', 'segoeui.ttf']:
-                try:
-                    grade_font = ImageFont.truetype(font_name, grade_font_size)
-                    break
-                except OSError:
-                    continue
-            if grade_font:
-                gb = draw.textbbox((0, 0), self.grade_str, font=grade_font)
-                gw = gb[2] - gb[0]
-                gx = (hires - gw) // 2
-                gy = hires - 28
-                draw.text((gx, gy), self.grade_str, fill=(*color, 200), font=grade_font)
-
-        # Downscale with high-quality resampling
+        # 4. Downscale with LANCZOS for crisp result
         img = img.resize((size, size), Image.LANCZOS)
         return img
 
