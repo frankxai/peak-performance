@@ -50,8 +50,8 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
   if (disk.freeGB < 20) {
     recommendations.push({
       priority: 'urgent', gate: 'disk',
-      message: `Only ${disk.freeGB}GB disk free`,
-      fix: 'npm cache clean --force && rm -rf /tmp/vercel-*',
+      message: `Only ${disk.freeGB}GB disk free — run: npm cache clean --force`,
+      fix: 'npm-cache-clean',
       autoFixable: true,
     });
   }
@@ -92,9 +92,7 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
     recommendations.push({
       priority: 'medium', gate: 'workspace',
       message: `${temp.fileCount} temp files — consider cleanup`,
-      fix: os.platform() === 'win32'
-        ? 'powershell -Command "Remove-Item $env:TEMP\\* -Recurse -Force -ErrorAction SilentlyContinue"'
-        : 'rm -rf /tmp/vercel-* /tmp/next-* /tmp/turbo-*',
+      fix: os.platform() === 'win32' ? 'temp-clean-win' : 'temp-clean-unix',
       autoFixable: true,
     });
   }
@@ -102,9 +100,8 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
   if (!secrets.envFilesGitignored && secrets.envFilesFound.length > 0) {
     recommendations.push({
       priority: 'urgent', gate: 'secrets',
-      message: '.env files are NOT gitignored!',
-      fix: 'echo ".env*" >> .gitignore',
-      autoFixable: true,
+      message: '.env files are NOT gitignored — add .env* to .gitignore',
+      autoFixable: false, // Don't auto-modify gitignore — user should review
     });
   }
 

@@ -2,9 +2,11 @@
 Peak Performance Tray — Configuration and constants.
 """
 
+import os
+
 CONFIG = {
     'refresh_interval': 60,       # seconds between probe cycles
-    'cwd': r'C:\Users\frank\Arcanea',
+    'cwd': os.environ.get('PP_CWD', os.getcwd()),
     'theme': 'arcanea',           # 'arcanea' or 'plain'
     'alert_threshold': 50,        # score below this triggers toast notification
     'history_path': '.pp/history.json',

@@ -69,11 +69,10 @@ export function scoreCpuGpu(cpu: CpuInfo, gpu: GpuInfo | null): GateScore {
     if (gpu.utilPct > 90) score -= 2;
   }
 
-  // CPU load (relative to cores)
-  const loadPerCore = cpu.loadAvg1m / cpu.logicalCores;
-  if (loadPerCore > 2) score -= 3;
-  else if (loadPerCore > 1) score -= 2;
-  else if (loadPerCore > 0.7) score -= 1;
+  // CPU load (percentage-based, works on all platforms)
+  if (cpu.loadPct > 95) score -= 3;
+  else if (cpu.loadPct > 80) score -= 2;
+  else if (cpu.loadPct > 60) score -= 1;
 
   score = Math.max(0, Math.min(10, score));
 
@@ -84,7 +83,7 @@ export function scoreCpuGpu(cpu: CpuInfo, gpu: GpuInfo | null): GateScore {
     detail,
     metrics: {
       cores: cpu.logicalCores,
-      loadAvg: cpu.loadAvg1m,
+      loadPct: cpu.loadPct,
       ...(gpu ? { gpuTemp: gpu.tempC, gpuUtil: gpu.utilPct, gpuMem: `${gpu.memUsedMB}/${gpu.memTotalMB}MB` } : {}),
     },
   };

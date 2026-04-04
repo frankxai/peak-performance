@@ -16,8 +16,10 @@ import { formatMarkdown } from '../../format/terminal.js';
 import { resolve } from 'node:path';
 
 // MCP stdio protocol (simplified — for full SDK, use @modelcontextprotocol/sdk)
-const respond = (id: string | number, result: unknown) =>
+const respond = (id: string | number | undefined, result: unknown) => {
+  if (id === undefined) return; // Don't respond to notifications
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
+};
 
 const respondError = (id: string | number, code: number, message: string) =>
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } }) + '\n');
@@ -57,34 +59,52 @@ const TOOLS = [
   },
 ];
 
-function handleRequest(method: string, params: any, id: string | number) {
+/** Validate and sanitize a cwd path — must be absolute and exist */
+function safeCwd(input: string | undefined): string {
+  if (!input) return process.cwd();
+  const resolved = resolve(input);
+  // Reject paths with shell metacharacters
+  if (/[`$|;&<>]/.test(resolved)) return process.cwd();
+  try {
+    const { existsSync } = require('node:fs');
+    if (!existsSync(resolved)) return process.cwd();
+  } catch { /* skip */ }
+  return resolved;
+}
+
+function handleRequest(method: string, params: Record<string, unknown> | undefined, id: string | number | undefined) {
   switch (method) {
     case 'initialize':
-      respond(id, {
+      if (id !== undefined) respond(id, {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
         serverInfo: { name: 'peak-performance', version: '0.1.0' },
       });
       break;
 
+    // MCP notifications — silently ignore (no id, no response expected)
+    case 'notifications/initialized':
+    case 'notifications/cancelled':
+      break;
+
     case 'tools/list':
-      respond(id, { tools: TOOLS });
+      if (id !== undefined) respond(id, { tools: TOOLS });
       break;
 
     case 'tools/call': {
-      const toolName = params?.name;
-      const args = params?.arguments || {};
+      const toolName = (params as Record<string, unknown>)?.name as string;
+      const args = ((params as Record<string, unknown>)?.arguments || {}) as Record<string, unknown>;
 
       switch (toolName) {
         case 'pp_audit': {
-          const audit = runAudit({ cwd: args.cwd || process.cwd() });
+          const audit = runAudit({ cwd: safeCwd(args.cwd as string) });
           const tracker = new TrendTracker(resolve(process.cwd(), '.pp', 'history.json'));
           tracker.record(audit);
 
           let content: string;
           if (args.format === 'json') content = JSON.stringify(audit, null, 2);
           else if (args.format === 'compact') content = `PP ${audit.totalScore}/${audit.grade}`;
-          else content = formatMarkdown(audit, args.theme || 'arcanea');
+          else content = formatMarkdown(audit, (args.theme as 'arcanea' | 'plain') || 'arcanea');
 
           respond(id, { content: [{ type: 'text', text: content }] });
           break;
@@ -92,7 +112,7 @@ function handleRequest(method: string, params: any, id: string | number) {
 
         case 'pp_trend': {
           const tracker = new TrendTracker(resolve(process.cwd(), '.pp', 'history.json'));
-          const entries = tracker.getLast(args.count || 10);
+          const entries = tracker.getLast(Number(args.count) || 10);
           const delta = tracker.getDelta();
 
           let text = entries.map(e =>
@@ -134,7 +154,7 @@ function handleRequest(method: string, params: any, id: string | number) {
         }
 
         default:
-          respondError(id, -32601, `Unknown tool: ${toolName}`);
+          if (id !== undefined) respondError(id, -32601, `Unknown tool: ${toolName}`);
       }
       break;
     }
@@ -156,8 +176,8 @@ process.stdin.on('data', (chunk: string) => {
     try {
       const msg = JSON.parse(line);
       handleRequest(msg.method, msg.params, msg.id);
-    } catch (e: any) {
-      process.stderr.write(`Parse error: ${e.message}\n`);
+    } catch (e: unknown) {
+      process.stderr.write(`Parse error: ${e instanceof Error ? e.message : 'unknown'}\n`);
     }
   }
 });
