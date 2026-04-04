@@ -40,6 +40,9 @@ export { detectAgents, agentLoadSummary } from './agents/detector.js';
 // History
 export { TrendTracker } from './history/tracker.js';
 
+// Doctor (root cause diagnosis)
+export { diagnose, formatDiagnoses } from './core/doctor.js';
+
 // Snapshots
 export { takeSnapshot } from './core/snapshot.js';
 

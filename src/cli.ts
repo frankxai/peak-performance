@@ -12,11 +12,21 @@
  *   pp snapshot        Screenshot + audit bundle (archived)
  */
 import { runAudit } from './core/audit.js';
+import { diagnose, formatDiagnoses } from './core/doctor.js';
 import { TrendTracker } from './history/tracker.js';
 import { runAllFixes } from './fixes/autofix.js';
 import { takeSnapshot } from './core/snapshot.js';
 import { formatAudit, formatTrend, formatCompact, formatJson, formatMarkdown } from './format/terminal.js';
 import { resolve } from 'node:path';
+
+// Respect NO_COLOR standard (https://no-color.org/)
+if (process.env['NO_COLOR'] !== undefined) {
+  // Strip ANSI codes by monkey-patching console.log
+  const origLog = console.log;
+  console.log = (...args: unknown[]) => origLog(...args.map(a =>
+    typeof a === 'string' ? a.replace(/\x1b\[[0-9;]*m/g, '') : a
+  ));
+}
 
 const args = process.argv.slice(2);
 const command = args[0] || 'audit';
@@ -89,6 +99,14 @@ switch (command) {
     break;
   }
 
+  case 'doctor': {
+    const audit = runAudit({ cwd: process.cwd() });
+    console.log(formatAudit(audit, theme));
+    const diagnoses = diagnose(audit);
+    console.log(formatDiagnoses(diagnoses));
+    break;
+  }
+
   case 'snapshot': {
     const notes = args.slice(1).join(' ') || undefined;
     console.log('\n  Taking snapshot (audit + screenshots)...\n');
@@ -106,9 +124,14 @@ switch (command) {
 
   Commands:
     pp audit [--json|--md|--plain]   Full system audit
+    pp doctor                        Diagnose root causes + action plan
     pp trend [N]                     Show last N score entries
     pp fix                           Run auto-fixes
     pp compact                       One-line status
     pp snapshot [notes]              Screenshot + audit archive bundle
+
+  Environment:
+    NO_COLOR=1                       Disable ANSI color codes
+    PP_CWD=/path                     Override working directory
 `);
 }
