@@ -175,7 +175,7 @@ export function scoreSecrets(secrets: SecretsInfo): GateScore {
       : 'No .env files found',
     metrics: {
       envFiles: secrets.envFilesFound.length,
-      gitignored: secrets.envFilesGitignored,
+      gitignored: secrets.envFilesGitignored ? 1 : 0,
       suspicious: secrets.suspiciousFiles.length,
     },
   };

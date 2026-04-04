@@ -1,0 +1,9 @@
+tray/
+.pp/
+.git/
+assets/
+src/
+*.ts
+!dist/**
+tsconfig.json
+node_modules/

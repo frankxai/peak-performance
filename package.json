@@ -8,6 +8,11 @@
     "pp": "dist/cli.js",
     "peak-performance": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "homepage": "https://github.com/frankxai/peak-performance#readme",
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -34,7 +39,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/arcanea-ai/peak-performance"
+    "url": "https://github.com/frankxai/peak-performance"
   },
   "engines": {
     "node": ">=18"
