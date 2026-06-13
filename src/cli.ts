@@ -16,6 +16,7 @@ import { diagnose, formatDiagnoses } from './core/doctor.js';
 import { TrendTracker } from './history/tracker.js';
 import { runAllFixes } from './fixes/autofix.js';
 import { takeSnapshot } from './core/snapshot.js';
+import { runPrepHandover } from './core/handover.js';
 import { formatAudit, formatTrend, formatCompact, formatJson, formatMarkdown } from './format/terminal.js';
 import { resolve } from 'node:path';
 
@@ -118,6 +119,17 @@ switch (command) {
     break;
   }
 
+  case 'prep': {
+    console.log('\n  Running Agent State Preservation & Handover (ASPH) Prep...\n');
+    const result = runPrepHandover(process.cwd());
+    console.log('  ✅ Repository checkpoints completed.');
+    console.log('  ✅ Claude sessions analyzed.');
+    console.log('  ✅ Handover prompt templates optimized.');
+    console.log(`  Saved Plaintext Log: ${result.txtFile}`);
+    console.log(`  Saved Interactive Dashboard: ${result.htmlFile}\n`);
+    break;
+  }
+
   default:
     console.log(`
   Peak Performance — System health for AI-powered machines
@@ -129,6 +141,7 @@ switch (command) {
     pp fix                           Run auto-fixes
     pp compact                       One-line status
     pp snapshot [notes]              Screenshot + audit archive bundle
+    pp prep                          Preserve agent state and prepare reboot
 
   Environment:
     NO_COLOR=1                       Disable ANSI color codes

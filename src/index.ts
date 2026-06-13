@@ -45,6 +45,7 @@ export { diagnose, formatDiagnoses } from './core/doctor.js';
 
 // Snapshots
 export { takeSnapshot } from './core/snapshot.js';
+export { runPrepHandover } from './core/handover.js';
 
 // Fixes
 export { runAllFixes, cleanNpmCache, cleanTempFiles, applyFix } from './fixes/autofix.js';
