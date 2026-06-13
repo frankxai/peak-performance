@@ -40,6 +40,8 @@ function runCmd(cmd: string, cwd: string): string {
 /** Get user's Desktop directory path */
 function getDesktopPath(): string {
   const home = os.homedir();
+  const oneDriveDesktop = join(home, 'OneDrive', 'Desktop');
+  if (existsSync(oneDriveDesktop)) return oneDriveDesktop;
   const desktop = join(home, 'Desktop');
   if (existsSync(desktop)) return desktop;
   const downloads = join(home, 'Downloads');
@@ -62,14 +64,25 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
     }
   }
 
-  // 2. Parse active sessions from Claude history
+  // 2. Parse active sessions from Claude + other harness histories (agy/antigravity, codex)
+  // Merge by sessionId (or workspace for non-claude), keep the most recent lastPrompt.
   const sessions: Record<string, SessionData> = {};
-  if (existsSync(historyPath)) {
-    const lines = readFileSync(historyPath, 'utf8').split('\n').filter(l => l.trim());
+  const historyFiles = [
+    historyPath,
+    'C:\\Users\\frank\\.gemini\\antigravity-cli\\history.jsonl',
+    'C:\\Users\\frank\\.codex\\history.jsonl'
+  ];
+  for (const hPath of historyFiles) {
+    if (!existsSync(hPath)) continue;
+    const lines = readFileSync(hPath, 'utf8').split('\n').filter(l => l.trim());
     for (const line of lines) {
       try {
         const entry = JSON.parse(line);
-        const { sessionId, project, display, timestamp } = entry;
+        // Claude uses sessionId + project + display; agy often workspace + display + conversationId; codex session_id + text
+        const sessionId = entry.sessionId || entry.conversationId || entry.session_id || (entry.workspace ? `ws:${entry.workspace}` : null);
+        const project = entry.project || entry.workspace || '';
+        const display = entry.display || entry.text || '';
+        const timestamp = entry.timestamp || entry.ts || 0;
         if (!sessionId) continue;
         
         if (!sessions[sessionId]) {
@@ -83,11 +96,18 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
         }
         
         if (display && display.trim()) {
-          sessions[sessionId].lastPrompt = display.trim();
+          // Prefer longer/more recent prompt
+          if (timestamp >= sessions[sessionId].lastTimestamp || display.length > sessions[sessionId].lastPrompt.length) {
+            sessions[sessionId].lastPrompt = display.trim();
+          }
           sessions[sessionId].promptCount++;
         }
         if (timestamp) {
           sessions[sessionId].lastTimestamp = Math.max(sessions[sessionId].lastTimestamp, timestamp);
+        }
+        // If project empty but we have a later one, keep best
+        if (project && (!sessions[sessionId].project || timestamp > sessions[sessionId].lastTimestamp)) {
+          sessions[sessionId].project = project;
         }
       } catch {
         // Skip parse errors
@@ -166,11 +186,20 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
     if (repo.activeSession) {
       txtContent += `- Session ID: ${repo.activeSession.sessionId}\n`;
       txtContent += `- Last Prompt: ${repo.activeSession.lastPrompt.slice(0, 100)}...\n`;
+      // Touched files since the WIP (best effort)
+      const touched = runCmd('git diff --name-only HEAD~1 2>$null || git status --porcelain', repo.path).split('\n').filter(Boolean).slice(0, 8).join(', ');
+      if (touched) txtContent += `- Touched (approx): ${touched}\n`;
       txtContent += `- Continuation prompt:\n`;
       txtContent += `------------------------------------------------------------\n`;
       txtContent += `/goal [FEYNMAN ROUTE] Resume task on branch ${repo.branch}.\n`;
       txtContent += `Objective: Continue working on: "${repo.activeSession.lastPrompt.replace(/\n/g, ' ')}".\n`;
-      txtContent += `Context: First run 'git reset HEAD~1' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.\n`;
+      let ctx = `Context: First run 'git reset HEAD~1' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
+      if (touched) ctx += ` Touched files: ${touched}.`;
+      // Worktree / global protocol note for best thinkers pattern
+      if (!/agent\//.test(repo.branch)) {
+        ctx += ` (Note: active branch is not agent/* — consider worktree per global parallel agent rules for isolation.)`;
+      }
+      txtContent += `${ctx}\n`;
       txtContent += `------------------------------------------------------------\n`;
       
       const shortShortcut = repo.name === 'Starlight-Intelligence-System' ? 'clsis' :
