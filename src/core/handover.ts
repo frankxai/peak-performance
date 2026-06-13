@@ -129,12 +129,25 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
     const uncommittedCount = uncommittedList.length;
     
     let checkpointCreated = false;
+    let wipTag = '';
     if (uncommittedCount > 0) {
       // Create WIP commit to stash changes safely
       runCmd('git add -A', repoPath);
       const commitOut = runCmd('git commit -m "wip: pre-reboot checkpoint (ASPH)" --no-verify', repoPath);
       if (commitOut) {
         checkpointCreated = true;
+        // Genius safety: tag + note the objective + touched for traceability (smarter than plain commit)
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0,19);
+        wipTag = `asph-wip-${ts}`;
+        runCmd(`git tag ${wipTag}`, repoPath);
+        const noteContent = `ASPH WIP\nBranch: ${branch}\nObjective: ${matchedSession ? matchedSession.lastPrompt.replace(/\n/g, ' ').slice(0,300) : 'N/A'}\nTouched: ${uncommittedList.slice(0,10).join(' ')}\nResume with: git reset HEAD~1 --mixed\nFull prompt in handover artifacts.`;
+        runCmd(`git notes add -f -m "${noteContent.replace(/"/g, '\\"')}"`, repoPath);
+        // Export patch for extra safety / visual diff later
+        const patchDir = join(repoPath, '.asph-wip');
+        if (!existsSync(patchDir)) {
+          runCmd(`mkdir -p "${patchDir}"`, repoPath); // cross platform-ish
+        }
+        runCmd(`git diff HEAD~1 > "${patchDir}/asph-${ts}.patch"`, repoPath);
       }
     }
 
