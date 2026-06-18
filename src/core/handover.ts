@@ -128,6 +128,16 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
     const uncommittedList = status.split('\n').filter(l => l.trim());
     const uncommittedCount = uncommittedList.length;
     
+    // Match this repo path to the most recent active session
+    let matchedSession: SessionData | undefined;
+    for (const s of Object.values(sessions)) {
+      if (s.project && s.project.toLowerCase() === repoPath.toLowerCase()) {
+        if (!matchedSession || s.lastTimestamp > matchedSession.lastTimestamp) {
+          matchedSession = s;
+        }
+      }
+    }
+
     let checkpointCreated = false;
     let wipTag = '';
     if (uncommittedCount > 0) {
@@ -140,24 +150,16 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
         const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0,19);
         wipTag = `asph-wip-${ts}`;
         runCmd(`git tag ${wipTag}`, repoPath);
-        const noteContent = `ASPH WIP\nBranch: ${branch}\nObjective: ${matchedSession ? matchedSession.lastPrompt.replace(/\n/g, ' ').slice(0,300) : 'N/A'}\nTouched: ${uncommittedList.slice(0,10).join(' ')}\nResume with: git reset HEAD~1 --mixed\nFull prompt in handover artifacts.`;
-        runCmd(`git notes add -f -m "${noteContent.replace(/"/g, '\\"')}"`, repoPath);
+        // Safer note via temp file (avoids quoting hell with newlines/special chars in objective)
+        const noteContent = `ASPH WIP\nBranch: ${branch}\nObjective: ${(matchedSession ? matchedSession.lastPrompt.replace(/\n/g, ' ').slice(0,300) : 'N/A')}\nTouched: ${uncommittedList.slice(0,10).join(' ')}\nResume with: git reset HEAD~1 --mixed\nFull prompt + visual console in agentic-ops/lifecycle/asph-genius-recovery.html`;
+        const noteFile = join(repoPath, '.asph-wip', `note-${ts}.txt`);
+        try { require('fs').writeFileSync(noteFile, noteContent); runCmd(`git notes add -f -F "${noteFile}"`, repoPath); } catch(e){ /* non-fatal */ }
         // Export patch for extra safety / visual diff later
         const patchDir = join(repoPath, '.asph-wip');
         if (!existsSync(patchDir)) {
           runCmd(`mkdir -p "${patchDir}"`, repoPath); // cross platform-ish
         }
         runCmd(`git diff HEAD~1 > "${patchDir}/asph-${ts}.patch"`, repoPath);
-      }
-    }
-
-    // Match this repo path to the most recent active session
-    let matchedSession: SessionData | undefined;
-    for (const s of Object.values(sessions)) {
-      if (s.project && s.project.toLowerCase() === repoPath.toLowerCase()) {
-        if (!matchedSession || s.lastTimestamp > matchedSession.lastTimestamp) {
-          matchedSession = s;
-        }
       }
     }
 
