@@ -44,9 +44,9 @@
   "engines": {
     "node": ">=18"
   },
-  "dependencies": {},
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "tsx": "^4.19.0"
+    "@types/node": "^26.1.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
   }
 }

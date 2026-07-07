@@ -123,6 +123,7 @@ export function scoreProcesses(procs: ProcessInfo): GateScore {
       vscode: procs.vscodeCount,
       node: procs.nodeCount,
       total: procs.totalProcesses,
+      protected: procs.protectedCount,
     },
   };
 }

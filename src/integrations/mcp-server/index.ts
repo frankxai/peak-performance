@@ -10,9 +10,10 @@
  *   { "peak-performance": { "command": "npx", "args": ["@arcanea/pp", "--mcp"] } }
  */
 import { runAudit } from '../../core/audit.js';
+import { buildMaintenancePlan } from '../../core/maintenance.js';
 import { TrendTracker } from '../../history/tracker.js';
 import { runAllFixes } from '../../fixes/autofix.js';
-import { formatMarkdown } from '../../format/terminal.js';
+import { formatMaintenanceCompact, formatMarkdown } from '../../format/terminal.js';
 import { resolve } from 'node:path';
 
 // MCP stdio protocol (simplified — for full SDK, use @modelcontextprotocol/sdk)
@@ -97,14 +98,18 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
 
       switch (toolName) {
         case 'pp_audit': {
-          const audit = runAudit({ cwd: safeCwd(args.cwd as string) });
-          const tracker = new TrendTracker(resolve(process.cwd(), '.pp', 'history.json'));
-          tracker.record(audit);
+          const cwd = safeCwd(args.cwd as string);
 
           let content: string;
-          if (args.format === 'json') content = JSON.stringify(audit, null, 2);
-          else if (args.format === 'compact') content = `PP ${audit.totalScore}/${audit.grade}`;
-          else content = formatMarkdown(audit, (args.theme as 'arcanea' | 'plain') || 'arcanea');
+          if (args.format === 'compact') {
+            content = formatMaintenanceCompact(buildMaintenancePlan(cwd), { color: false });
+          } else {
+            const audit = runAudit({ cwd });
+            const tracker = new TrendTracker(resolve(process.cwd(), '.pp', 'history.json'));
+            tracker.record(audit);
+            if (args.format === 'json') content = JSON.stringify(audit, null, 2);
+            else content = formatMarkdown(audit, (args.theme as 'arcanea' | 'plain') || 'arcanea');
+          }
 
           respond(id, { content: [{ type: 'text', text: content }] });
           break;

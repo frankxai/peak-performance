@@ -4,6 +4,9 @@
  */
 import { GATE_NAMES, type GateId } from '../types.js';
 import type { AuditResult, TrendEntry } from '../types.js';
+import type { ProcessInfo } from '../core/probes.js';
+import type { MaintenancePlan } from '../core/maintenance.js';
+import type { OvernightGuardPlan } from '../core/overnight.js';
 
 type Theme = 'arcanea' | 'plain';
 
@@ -34,6 +37,11 @@ function gradeColor(grade: string): string {
   if (grade.startsWith('B')) return '\x1b[36m';
   if (grade.startsWith('C')) return '\x1b[33m';
   return '\x1b[31m';
+}
+
+function truncate(value: string, max: number): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, Math.max(0, max - 3))}...`;
 }
 
 export function formatAudit(audit: AuditResult, theme: Theme = 'arcanea'): string {
@@ -116,6 +124,21 @@ export function formatCompact(audit: AuditResult, theme: Theme = 'arcanea'): str
   return `PP ${gc}${audit.totalScore}/${audit.grade}\x1b[0m${critStr}${warnStr}`;
 }
 
+/** Compact one-line maintenance format for overnight hooks and dashboards */
+export function formatMaintenanceCompact(plan: MaintenancePlan, options: { color?: boolean } = {}): string {
+  const color = options.color !== false;
+  const gc = color ? gradeColor(plan.metrics.grade) : '';
+  const reset = color ? '\x1b[0m' : '';
+  const actionStr = plan.actions.length > 0 ? ` | ${plan.actions.length} actions` : '';
+  return [
+    `PP ${gc}${plan.metrics.score}/${plan.metrics.grade}${reset}`,
+    `${plan.posture}`,
+    `swarms ${plan.swarmPosture}`,
+    `RAM ${plan.metrics.ramUsedPct}% (${plan.metrics.ramFreeMB}MB free)`,
+    `proc ${plan.metrics.totalProcesses}`,
+  ].join(' | ') + actionStr;
+}
+
 /** JSON output for piping to other tools */
 export function formatJson(audit: AuditResult): string {
   return JSON.stringify(audit, null, 2);
@@ -149,6 +172,115 @@ export function formatMarkdown(audit: AuditResult, theme: Theme = 'arcanea'): st
       if (rec.fix) lines.push(`  - Fix: \`${rec.fix}\``);
     }
   }
+
+  return lines.join('\n');
+}
+
+export function formatProcessInspection(procs: ProcessInfo, limit = 20): string {
+  const agents = procs.claudeCount + procs.cursorCount + procs.codexCount;
+  const rows = procs.processes.length > 0 ? procs.processes : procs.topConsumers;
+  const visibleRows = rows.slice(0, Math.max(1, limit));
+  const lines: string[] = [];
+
+  lines.push('');
+  lines.push('\x1b[1m  Peak Performance Process Inspection\x1b[0m');
+  lines.push('');
+  lines.push(`  Total: ${procs.totalProcesses} | Agents: ${agents} | Node: ${procs.nodeCount} | Protected: ${procs.protectedCount}`);
+  lines.push(`  Browsers: ${procs.edgeChromeTabs} | Editors: ${procs.vscodeCount}`);
+  lines.push(`  Showing: ${visibleRows.length}/${rows.length} process rows`);
+  lines.push('');
+  lines.push('  Top memory consumers');
+  lines.push('  PID      MB       Role         Guard     Command');
+  lines.push('  -------  -------  -----------  --------  ----------------------------------------------');
+
+  for (const proc of visibleRows) {
+    const guard = proc.protected ? 'guarded' : 'review';
+    const role = proc.role.padEnd(11).slice(0, 11);
+    const command = truncate(proc.command.replace(/\s+/g, ' '), 78);
+    lines.push(
+      `  ${String(proc.pid).padEnd(7)}  ${String(proc.memMB).padStart(7)}  ${role}  ${guard.padEnd(8)}  ${command}`
+    );
+    if (proc.protectionReason) {
+      lines.push(`                                      reason: ${proc.protectionReason}`);
+    }
+  }
+
+  lines.push('');
+  lines.push('  Rule: inspect first, write a receipt, then ask before terminating user-owned processes.');
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+export function formatMaintenancePlan(plan: MaintenancePlan): string {
+  const lines: string[] = [];
+
+  lines.push('');
+  lines.push('\x1b[1m  Peak Performance Maintenance Plan\x1b[0m');
+  lines.push('');
+  lines.push(`  ${plan.summary}`);
+  lines.push(`  RAM: ${plan.metrics.ramUsedPct}% used (${plan.metrics.ramFreeMB}MB free) | Disk: ${plan.metrics.diskFreeGB}GB free | Uptime: ${plan.metrics.uptimeHours}h`);
+  lines.push(`  Processes: ${plan.metrics.totalProcesses} total | ${plan.metrics.namedAgentCount} named agents | ${plan.metrics.nodeCount} node | ${plan.metrics.reviewableCount} reviewable`);
+  lines.push('');
+  lines.push('  Reasons');
+  for (const reason of plan.reasons) lines.push(`  - ${reason}`);
+
+  lines.push('');
+  lines.push('  Actions');
+  for (const action of plan.actions) {
+    const receipt = action.requiresReceipt ? ' | receipt required' : '';
+    lines.push(`  - [${action.priority}] ${action.id} (${action.owner}, ${action.permission}${receipt})`);
+    lines.push(`    ${action.reason}`);
+    if (action.command) lines.push(`    $ ${action.command}`);
+  }
+
+  lines.push('');
+  lines.push('  Protected roles: ' + JSON.stringify(plan.protectedRoles));
+  lines.push('  Reviewable roles: ' + JSON.stringify(plan.reviewableRoles));
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+export function formatOvernightGuardPlan(plan: OvernightGuardPlan): string {
+  const lines: string[] = [];
+
+  lines.push('');
+  lines.push('\x1b[1m  Peak Performance Overnight Guard\x1b[0m');
+  lines.push('');
+  lines.push(`  Directive: ${plan.directive.level} | New swarms: ${plan.directive.allowNewSwarms ? 'allowed when bounded' : 'hold'}`);
+  lines.push(`  ${plan.directive.summary}`);
+  lines.push(`  ${plan.maintenance.summary}`);
+  lines.push(`  RAM: ${plan.maintenance.metrics.ramUsedPct}% used (${plan.maintenance.metrics.ramFreeMB}MB free) | Disk: ${plan.maintenance.metrics.diskFreeGB}GB free | Uptime: ${plan.maintenance.metrics.uptimeHours}h`);
+  lines.push(`  Processes: ${plan.processSnapshot.totalProcesses} total | ${plan.processSnapshot.nodeCount} node | ${plan.processSnapshot.reviewableCount} reviewable`);
+  lines.push('');
+  lines.push('  Queen instructions');
+  for (const item of plan.directive.queenInstructions) lines.push(`  - ${item}`);
+  lines.push('');
+  lines.push('  Agent instructions');
+  for (const item of plan.directive.agentInstructions) lines.push(`  - ${item}`);
+  lines.push('');
+  lines.push('  Watch');
+  lines.push(`  - ${plan.watch.command}`);
+  lines.push(`  - log: ${plan.watch.logPath}`);
+  lines.push(`  - summary: ${plan.watch.summaryPath}`);
+  lines.push('');
+  lines.push('  SDS');
+  lines.push(`  - ${plan.sds.statusCommand}`);
+  lines.push(`  - ${plan.sds.guidance}`);
+
+  if (plan.processSnapshot.topReviewable.length > 0) {
+    lines.push('');
+    lines.push('  Top reviewable processes');
+    for (const proc of plan.processSnapshot.topReviewable.slice(0, 8)) {
+      lines.push(`  - PID ${proc.pid} ${proc.name} ${proc.memMB}MB ${proc.role}: ${proc.actionHint}`);
+    }
+  }
+
+  lines.push('');
+  lines.push('  No-touch classes');
+  for (const item of plan.noTouch) lines.push(`  - ${item}`);
+  lines.push('');
 
   return lines.join('\n');
 }

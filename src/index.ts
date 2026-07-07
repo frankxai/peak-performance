@@ -26,6 +26,7 @@ export {
   probeMemory, probeCpu, probeDisk, probeGpu,
   probeProcesses, probeGit, probeSecrets, probeTemp, probeUptime,
 } from './core/probes.js';
+export type { ProcessInfo, ProcessConsumer, ProcessRole } from './core/probes.js';
 
 // Gates
 export {
@@ -47,13 +48,35 @@ export { diagnose, formatDiagnoses } from './core/doctor.js';
 export { takeSnapshot } from './core/snapshot.js';
 export { runPrepHandover } from './core/handover.js';
 
+// Process ledger
+export { defaultProcessLedgerPath, defaultProcessWatchSummaryPath, runProcessWatch } from './core/process-ledger.js';
+export type { ProcessLedgerEvent, ProcessLedgerEventType, ProcessWatchOptions, ProcessWatchResult, ProcessWatchSessionSummary } from './core/process-ledger.js';
+
+// Maintenance planning
+export { buildMaintenancePlan } from './core/maintenance.js';
+export type { MaintenanceAction, MaintenancePlan, MaintenancePosture, SwarmPosture, ActionPermission } from './core/maintenance.js';
+
+// Overnight guard planning
+export {
+  buildOvernightGuardPlan,
+  defaultOvernightGuardDir,
+  formatOvernightGuardMarkdown,
+  writeOvernightGuardPlan,
+} from './core/overnight.js';
+export type {
+  OvernightDirectiveLevel,
+  OvernightGuardPlan,
+  OvernightGuardWriteResult,
+  OvernightProcessRow,
+} from './core/overnight.js';
+
 // Fixes
 export { runAllFixes, cleanNpmCache, cleanTempFiles, applyFix } from './fixes/autofix.js';
 
 // Formatters
 export {
   formatAudit, formatTrend, formatCompact,
-  formatJson, formatMarkdown,
+  formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan,
 } from './format/terminal.js';
 
 // Types

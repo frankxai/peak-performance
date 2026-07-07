@@ -9,6 +9,10 @@
  *   pp trend           Show score history
  *   pp fix             Run auto-fixes
  *   pp compact         One-line status for hooks/statusline
+ *   pp inspect         Process census and top memory consumers
+ *   pp watch           Bounded process start/stop ledger
+ *   pp maintain        Predictive maintenance and swarm posture
+ *   pp overnight       Overnight swarm guard plan
  *   pp snapshot        Screenshot + audit bundle (archived)
  */
 import { runAudit } from './core/audit.js';
@@ -17,7 +21,11 @@ import { TrendTracker } from './history/tracker.js';
 import { runAllFixes } from './fixes/autofix.js';
 import { takeSnapshot } from './core/snapshot.js';
 import { runPrepHandover } from './core/handover.js';
-import { formatAudit, formatTrend, formatCompact, formatJson, formatMarkdown } from './format/terminal.js';
+import { probeProcesses } from './core/probes.js';
+import { runProcessWatch } from './core/process-ledger.js';
+import { buildMaintenancePlan } from './core/maintenance.js';
+import { buildOvernightGuardPlan, formatOvernightGuardMarkdown, writeOvernightGuardPlan } from './core/overnight.js';
+import { formatAudit, formatTrend, formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan } from './format/terminal.js';
 import { resolve } from 'node:path';
 
 // Respect NO_COLOR standard (https://no-color.org/)
@@ -36,6 +44,29 @@ const flags = new Set(args.slice(1));
 const theme = flags.has('--plain') ? 'plain' as const : 'arcanea' as const;
 const historyPath = resolve(process.cwd(), '.pp', 'history.json');
 
+function readNumberFlag(name: string, fallback: number): number {
+  const inline = args.find(arg => arg.startsWith(`--${name}=`));
+  if (inline) {
+    const value = Number(inline.slice(name.length + 3));
+    return Number.isFinite(value) ? value : fallback;
+  }
+  const index = args.indexOf(`--${name}`);
+  if (index >= 0 && args[index + 1]) {
+    const value = Number(args[index + 1]);
+    return Number.isFinite(value) ? value : fallback;
+  }
+  return fallback;
+}
+
+function readStringFlag(name: string): string | undefined {
+  const inline = args.find(arg => arg.startsWith(`--${name}=`));
+  if (inline) return inline.slice(name.length + 3);
+  const index = args.indexOf(`--${name}`);
+  if (index >= 0) return args[index + 1];
+  return undefined;
+}
+
+void (async () => {
 switch (command) {
   case 'audit': {
     const audit = runAudit({ cwd: process.cwd() });
@@ -95,8 +126,8 @@ switch (command) {
   }
 
   case 'compact': {
-    const audit = runAudit({ cwd: process.cwd() });
-    console.log(formatCompact(audit, theme));
+    const plan = buildMaintenancePlan(process.cwd());
+    console.log(formatMaintenanceCompact(plan));
     break;
   }
 
@@ -105,6 +136,80 @@ switch (command) {
     console.log(formatAudit(audit, theme));
     const diagnoses = diagnose(audit);
     console.log(formatDiagnoses(diagnoses));
+    break;
+  }
+
+  case 'inspect': {
+    const procs = probeProcesses();
+    if (flags.has('--json')) {
+      console.log(JSON.stringify(procs, null, 2));
+    } else {
+      console.log(formatProcessInspection(procs, flags.has('--all') ? procs.processes.length : 20));
+    }
+    break;
+  }
+
+  case 'watch': {
+    const seconds = readNumberFlag('seconds', 60);
+    const intervalSeconds = readNumberFlag('interval', 2);
+    const logPath = readStringFlag('log');
+    const summaryPath = readStringFlag('summary');
+    const result = await runProcessWatch({
+      seconds,
+      intervalMs: Math.round(intervalSeconds * 1000),
+      logPath,
+      summaryPath,
+    });
+
+    if (flags.has('--json')) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log('');
+      console.log('  Peak Performance Process Watch');
+      console.log(`  Samples: ${result.samples} | Started: ${result.started} | Stopped: ${result.stopped}`);
+      console.log(`  Log: ${result.logPath}`);
+      console.log(`  Summary: ${result.summaryPath}`);
+      if (result.events.length > 0) {
+        console.log('');
+        for (const event of result.events.slice(-20)) {
+          console.log(`  ${event.type.padEnd(5)} PID ${event.process.pid} ${event.process.name} ${event.process.memMB}MB ${event.process.role}`);
+          console.log(`        ${event.process.reasoning}`);
+        }
+      }
+      console.log('');
+    }
+    break;
+  }
+
+  case 'maintain':
+  case 'forecast': {
+    const plan = buildMaintenancePlan(process.cwd());
+    if (flags.has('--json')) {
+      console.log(JSON.stringify(plan, null, 2));
+    } else {
+      console.log(formatMaintenancePlan(plan));
+    }
+    break;
+  }
+
+  case 'overnight':
+  case 'guard': {
+    const plan = buildOvernightGuardPlan(process.cwd());
+    const written = flags.has('--write') ? writeOvernightGuardPlan(plan, readStringFlag('dir')) : undefined;
+
+    if (flags.has('--json')) {
+      console.log(JSON.stringify(written ? { ...plan, written } : plan, null, 2));
+    } else if (flags.has('--md')) {
+      console.log(formatOvernightGuardMarkdown(plan));
+      if (written) console.log(`\nSaved: ${written.markdownFile}\nJSON: ${written.jsonFile}\n`);
+    } else {
+      console.log(formatOvernightGuardPlan(plan));
+      if (written) {
+        console.log(`  Saved guard report: ${written.markdownFile}`);
+        console.log(`  Saved guard JSON: ${written.jsonFile}`);
+        console.log('');
+      }
+    }
     break;
   }
 
@@ -140,6 +245,10 @@ switch (command) {
     pp trend [N]                     Show last N score entries
     pp fix                           Run auto-fixes
     pp compact                       One-line status
+    pp inspect [--all|--json]        Process census + top memory consumers
+    pp watch [--seconds N]           Bounded process start/stop ledger
+    pp maintain [--json]             Predict maintenance + swarm posture
+    pp overnight [--write|--json]     Overnight swarm guard plan
     pp snapshot [notes]              Screenshot + audit archive bundle
     pp prep                          Preserve agent state and prepare reboot
 
@@ -148,3 +257,7 @@ switch (command) {
     PP_CWD=/path                     Override working directory
 `);
 }
+})().catch((err: unknown) => {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exitCode = 1;
+});

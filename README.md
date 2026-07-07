@@ -84,6 +84,10 @@ Exposes three tools: `pp_audit`, `pp_trend`, `pp_fix`.
 | `pp trend [N]` | Show last N score entries with delta |
 | `pp fix` | Run auto-fixable repairs (npm cache, temp files) |
 | `pp compact` | One-line status: `PP 80/A- 3WARN` |
+| `pp inspect [--all|--json]` | Process census with memory, command, role, reasoning, and protected-process classification |
+| `pp watch [--seconds N] [--interval N] [--log path]` | Bounded process start/stop ledger for Starlight/JarvisOps ingestion |
+| `pp maintain [--json]` | Predict maintenance posture, swarm posture, and safe action paths |
+| `pp overnight [--write|--json|--md]` | Build an overnight swarm guard plan with Queen/SDS/process instructions |
 | `pp snapshot [notes]` | Screenshot both screens + audit + agent census |
 
 ## The Ten Gates
@@ -152,9 +156,76 @@ The Python tray app (`tray/`) provides always-on monitoring:
 
 - `npm cache clean --force` — frees GB of cached packages
 - Clean temp files older than 3 days
-- More fixes coming (orphan node cleanup, git gc, etc.)
+- More fixes coming (git gc, cache cleanup, and supervised maintenance tasks)
 
 Before/after score comparison is shown automatically.
+
+`pp fix` does not kill user-owned processes. Use `pp inspect` first, then write a process action receipt before terminating anything ambiguous or user-facing.
+
+## Process Inspection
+
+`pp inspect` lists process rows with PID, parent PID, memory, role, redacted command line, reasoning, action hint, and a guard label. AI agents, local model runtimes, MCP/tool servers, editors, and supervised dev servers are treated as protected by default.
+
+Use this for RAM triage before taking action:
+
+```bash
+pp inspect
+pp inspect --all
+pp inspect --json
+```
+
+Process cleanup policy lives in `docs/process-action-receipts.md`.
+
+## Process Ledger
+
+`pp watch` samples process state for a bounded window and appends start/stop events to a local JSONL ledger. This is meant for the Starlight/JarvisOps control plane and Queen-style orchestration to understand what started, why it was classified that way, and what the safe action path is.
+
+```bash
+pp watch --seconds 60 --interval 2
+pp watch --seconds 300 --log "$HOME/.starlight/process-ledger/process-events.jsonl"
+```
+
+Default ledger path:
+
+```text
+~/.starlight/process-ledger/process-events.jsonl
+```
+
+The watcher is bounded by default and is not an always-on background service.
+
+## Predictive Maintenance
+
+`pp maintain` turns the audit and process map into an operating posture:
+
+- maintenance posture: `green`, `watch`, `constrain`, `maintenance`, or `restart-soon`
+- swarm posture: `expand`, `steady`, `pause-new-swarms`, or `drain-and-handoff`
+- reasons for the posture
+- action list with owner, permission type, command hint, risk, and receipt requirement
+
+```bash
+pp maintain
+pp maintain --json
+```
+
+The command predicts and routes work; it does not stop processes, restart the machine, mutate cloud services, or launch new agents.
+
+## Overnight Guard
+
+`pp overnight` builds a non-destructive overnight operating packet for Starlight swarms. It combines the maintenance posture, protected process classes, reviewable process candidates, SDS guidance, process-watch command, and Queen/agent instructions into one guard plan.
+
+```bash
+pp overnight
+pp overnight --write
+pp overnight --json
+```
+
+`--write` saves JSON and Markdown reports under:
+
+```text
+~/.starlight/overnight-guard/
+```
+
+The overnight guard does not kill processes, start background daemons, launch agents, or mutate cloud services. It is an operator packet for the Starlight Queen, Command Center, JarvisOps, SDS, and future agents.
 
 ## Snapshot
 

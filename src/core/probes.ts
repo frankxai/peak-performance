@@ -23,6 +23,7 @@ function runFile(cmd: string, args: string[], timeout = 10_000): string {
     return execFileSync(cmd, args, {
       encoding: 'utf-8',
       timeout,
+      maxBuffer: 32 * 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     }).trim();
@@ -193,7 +194,35 @@ export interface ProcessInfo {
   codexCount: number;
   vscodeCount: number;
   edgeChromeTabs: number;
-  topConsumers: { name: string; memMB: number }[];
+  protectedCount: number;
+  processes: ProcessConsumer[];
+  topConsumers: ProcessConsumer[];
+}
+
+export type ProcessRole =
+  | 'ai-agent'
+  | 'local-model'
+  | 'node'
+  | 'mcp'
+  | 'dev-server'
+  | 'build'
+  | 'browser'
+  | 'editor'
+  | 'shell'
+  | 'system'
+  | 'other';
+
+export interface ProcessConsumer {
+  pid: number;
+  parentPid: number;
+  name: string;
+  memMB: number;
+  role: ProcessRole;
+  protected: boolean;
+  protectionReason?: string;
+  reasoning: string;
+  actionHint: string;
+  command: string;
 }
 
 /** Exact process name matching to avoid false positives */
@@ -206,6 +235,228 @@ const PROCESS_MATCHERS: Record<string, (name: string) => boolean> = {
   browser: (n) => n === 'msedge.exe' || n === 'chrome.exe' || n === 'msedge' || n === 'chrome',
 };
 
+const WINDOWS_PROTECTED_NAMES = new Set([
+  'audiodg.exe',
+  'conhost.exe',
+  'csrss.exe',
+  'ctfmon.exe',
+  'dwm.exe',
+  'explorer.exe',
+  'fontdrvhost.exe',
+  'lsass.exe',
+  'memory compression',
+  'msmpeng.exe',
+  'registry',
+  'runtimebroker.exe',
+  'searchhost.exe',
+  'securityhealthservice.exe',
+  'securityhealthsystray.exe',
+  'services.exe',
+  'shellexperiencehost.exe',
+  'shellhost.exe',
+  'sihost.exe',
+  'smss.exe',
+  'spoolsv.exe',
+  'startmenuexperiencehost.exe',
+  'svchost.exe',
+  'system',
+  'system idle process',
+  'taskhostw.exe',
+  'textinputhost.exe',
+  'wininit.exe',
+  'winlogon.exe',
+  'wlanext.exe',
+  'wudfhost.exe',
+]);
+
+interface WinProcessRow {
+  ProcessId?: number | string;
+  ParentProcessId?: number | string;
+  Name?: string;
+  CommandLine?: string | null;
+  WorkingSetSize?: number | string | null;
+}
+
+function parseJsonArray<T>(raw: string): T[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as T | T[];
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    return [];
+  }
+}
+
+function redactCommandLine(command: string): string {
+  return command
+    .replace(/(["']?(?:api[_-]?key|token|secret|password|passwd|pwd|authorization)["']?\s*:\s*["'])[^"']+/gi, '$1[REDACTED]')
+    .replace(/(api[_-]?key|token|secret|password|passwd|pwd|authorization)(=|\s+)[^\s"']+/gi, '$1$2[REDACTED]')
+    .replace(/(--(?:api-key|token|secret|password|authorization)\s+)[^\s"']+/gi, '$1[REDACTED]')
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]');
+}
+
+function classifyProcess(name: string, command: string): Pick<ProcessConsumer, 'role' | 'protected' | 'protectionReason'> {
+  const n = name.toLowerCase();
+  const cmd = command.toLowerCase();
+  const looksLikeMcpServer =
+    cmd.includes('modelcontextprotocol') ||
+    /(^|[\s"'\\/])(mcp|mcp-server|mcpserver)([\s"'\\/]|$)/.test(cmd) ||
+    /(^|[\s"'\\/])(serve|server)\s+mcp([\s"']|$)/.test(cmd) ||
+    /(^|[\s"'])(--mcp|-mcp)([\s"']|$)/.test(cmd) ||
+    cmd.includes('agentic-ops/server.js --mcp') ||
+    cmd.includes('agentic-ops\\server.js --mcp') ||
+    cmd.includes('railway.js" mcp') ||
+    cmd.includes("railway.js' mcp") ||
+    cmd.includes('railway.exe mcp') ||
+    cmd.includes('headroom mcp serve');
+
+  if (n.includes('antigravity') || cmd.includes('antigravity')) {
+    return { role: 'ai-agent', protected: true, protectionReason: 'active coding-agent workspace' };
+  }
+  if (PROCESS_MATCHERS.claude(n) || PROCESS_MATCHERS.codex(n) || PROCESS_MATCHERS.cursor(n)) {
+    return { role: 'ai-agent', protected: true, protectionReason: 'active AI agent session' };
+  }
+  if (n.includes('lmstudio') || n.includes('llmster') || cmd.includes('.lmstudio') || n === 'ollama.exe' || n === 'ollama') {
+    return { role: 'local-model', protected: true, protectionReason: 'local model runtime' };
+  }
+  if (PROCESS_MATCHERS.vscode(n)) {
+    return { role: 'editor', protected: true, protectionReason: 'editor workspace' };
+  }
+  if (PROCESS_MATCHERS.browser(n)) {
+    return { role: 'browser', protected: false };
+  }
+  if (cmd.includes('hermes_cli.main gateway run') || cmd.includes('hermes-cli') || cmd.includes('hermes gateway')) {
+    return { role: 'mcp', protected: true, protectionReason: 'Hermes/Starlight orchestration gateway' };
+  }
+  if (looksLikeMcpServer) {
+    return { role: 'mcp', protected: true, protectionReason: 'agent/tooling server' };
+  }
+  if (
+    /\b(next|vite|astro|remix)\s+(build|export)\b/.test(cmd) ||
+    /[\\/]next[\\/]dist[\\/]bin[\\/]next["']?\s+build\b/.test(cmd) ||
+    /[\\/]\.next[\\/]build[\\/]/.test(cmd) ||
+    /\bnpm(?:\.cmd)?\s+run\s+(gen|build|prebuild|export|compile|render)\b/.test(cmd) ||
+    cmd.includes('generate_')
+  ) {
+    return { role: 'build', protected: false };
+  }
+  if (
+    /\b(next|vite|astro|remix)\s+(dev|start|preview)\b/.test(cmd) ||
+    /[\\/]next[\\/]dist[\\/]bin[\\/]next["']?\s+(dev|start)/.test(cmd) ||
+    /[\\/]next[\\/]dist[\\/]server[\\/]lib[\\/]start-server\.js\b/.test(cmd) ||
+    /[\\/]node_modules[\\/]\.bin[\\/].*(next|vite|astro|remix)(?:["']?\s+(dev|start|preview)\b)?/.test(cmd) ||
+    /\bnpm(?:\.cmd)?\s+run\s+(dev|start|preview)\b/.test(cmd) ||
+    /\b(pnpm|yarn|bun)(?:\.cmd)?(?:\s+--dir\s+\S+)?\s+(dev|start|preview)\b/.test(cmd) ||
+    cmd.includes('tsx watch')
+  ) {
+    return { role: 'dev-server', protected: true, protectionReason: 'dev server; stop through project supervisor' };
+  }
+  if (cmd.includes('next build')) {
+    return { role: 'build', protected: false };
+  }
+  if (PROCESS_MATCHERS.node(n)) {
+    return { role: 'node', protected: false };
+  }
+  if (n === 'bash.exe' || n === 'bash' || n === 'powershell.exe' || n === 'pwsh.exe' || n === 'cmd.exe') {
+    return { role: 'shell', protected: false };
+  }
+  if (WINDOWS_PROTECTED_NAMES.has(n) || n.includes('system')) {
+    return { role: 'system', protected: true, protectionReason: 'operating system process' };
+  }
+  return { role: 'other', protected: false };
+}
+
+function processReasoning(classification: Pick<ProcessConsumer, 'role' | 'protected' | 'protectionReason'>): string {
+  if (classification.protected) {
+    return `Protected ${classification.role}: ${classification.protectionReason ?? 'requires coordination before action'}.`;
+  }
+
+  switch (classification.role) {
+    case 'build':
+      return 'Reviewable build/generation job: usually resumable, but capture repo, command, and recovery path before stopping.';
+    case 'node':
+      return 'Reviewable node process: inspect parent command and repo before deciding whether it is an orphan.';
+    case 'browser':
+      return 'Reviewable user-facing browser process: prefer manual close unless clearly abandoned.';
+    case 'shell':
+      return 'Reviewable shell process: may own a child job; inspect the process tree before action.';
+    default:
+      return 'Reviewable unknown process: inspect purpose and owner before action.';
+  }
+}
+
+function processActionHint(classification: Pick<ProcessConsumer, 'role' | 'protected'>): string {
+  if (classification.protected) return 'Do not terminate without explicit coordination or a supervisor-specific stop path.';
+
+  switch (classification.role) {
+    case 'build':
+      return 'Can be reduced only after recording a receipt and confirming regeneration/resume command.';
+    case 'node':
+      return 'Candidate for reduction only if orphaned, duplicate, idle, or owned by a stopped task.';
+    case 'browser':
+      return 'Reduce by closing tabs/windows manually when user confirms.';
+    case 'shell':
+      return 'Reduce by stopping the child job or closing the owning terminal after confirmation.';
+    default:
+      return 'No automatic action; classify purpose first.';
+  }
+}
+
+function addProcessCounts(info: ProcessInfo, name: string): void {
+  const n = name.toLowerCase();
+  if (PROCESS_MATCHERS.node(n)) info.nodeCount++;
+  if (PROCESS_MATCHERS.claude(n)) info.claudeCount++;
+  if (PROCESS_MATCHERS.cursor(n)) info.cursorCount++;
+  if (PROCESS_MATCHERS.codex(n)) info.codexCount++;
+  if (PROCESS_MATCHERS.vscode(n)) info.vscodeCount++;
+  if (PROCESS_MATCHERS.browser(n)) info.edgeChromeTabs++;
+}
+
+function probeWindowsProcesses(info: ProcessInfo): boolean {
+  const ps = [
+    '$ErrorActionPreference = "SilentlyContinue";',
+    'Get-CimInstance Win32_Process |',
+    'Select-Object ProcessId,ParentProcessId,Name,CommandLine,WorkingSetSize |',
+    'ConvertTo-Json -Compress -Depth 2',
+  ].join(' ');
+  const rows = parseJsonArray<WinProcessRow>(runPS(ps, 15_000));
+  if (rows.length === 0) return false;
+
+  info.totalProcesses = rows.length;
+
+  const consumers: ProcessConsumer[] = [];
+  for (const row of rows) {
+    const name = String(row.Name ?? '').trim();
+    if (!name) continue;
+
+    addProcessCounts(info, name);
+
+    const command = redactCommandLine(String(row.CommandLine ?? name));
+    const memMB = Math.round((Number(row.WorkingSetSize ?? 0) / 1024 / 1024) * 10) / 10;
+    const classification = classifyProcess(name, command);
+    if (classification.protected) info.protectedCount++;
+
+    const reasoning = processReasoning(classification);
+    const actionHint = processActionHint(classification);
+
+    consumers.push({
+      pid: safeInt(String(row.ProcessId ?? 0)),
+      parentPid: safeInt(String(row.ParentProcessId ?? 0)),
+      name,
+      memMB,
+      command,
+      reasoning,
+      actionHint,
+      ...classification,
+    });
+  }
+
+  info.processes = consumers.sort((a, b) => b.memMB - a.memMB);
+  info.topConsumers = info.processes.slice(0, 20);
+
+  return true;
+}
+
 export function probeProcesses(): ProcessInfo {
   const info: ProcessInfo = {
     totalProcesses: 0,
@@ -215,10 +466,14 @@ export function probeProcesses(): ProcessInfo {
     codexCount: 0,
     vscodeCount: 0,
     edgeChromeTabs: 0,
+    protectedCount: 0,
+    processes: [],
     topConsumers: [],
   };
 
   if (os.platform() === 'win32') {
+    if (probeWindowsProcesses(info)) return info;
+
     const tasklist = runFile('tasklist', ['/fo', 'csv', '/nh']);
     const lines = tasklist.split('\n').filter(l => l.trim());
     info.totalProcesses = lines.length;
@@ -226,30 +481,37 @@ export function probeProcesses(): ProcessInfo {
     for (const line of lines) {
       const match = line.match(/"([^"]+)"/);
       if (!match) continue;
-      const name = match[1].toLowerCase();
-      if (PROCESS_MATCHERS.node(name)) info.nodeCount++;
-      if (PROCESS_MATCHERS.claude(name)) info.claudeCount++;
-      if (PROCESS_MATCHERS.cursor(name)) info.cursorCount++;
-      if (PROCESS_MATCHERS.codex(name)) info.codexCount++;
-      if (PROCESS_MATCHERS.vscode(name)) info.vscodeCount++;
-      if (PROCESS_MATCHERS.browser(name)) info.edgeChromeTabs++;
+      addProcessCounts(info, match[1]);
     }
   } else {
-    const ps = runFile('ps', ['aux', '--no-headers']);
+    const ps = runFile('ps', ['-eo', 'pid=,ppid=,rss=,comm=,args=']);
     const lines = ps.split('\n').filter(l => l.trim());
     info.totalProcesses = lines.length;
 
     for (const line of lines) {
-      // Extract the command name (last column, basename only)
-      const parts = line.trim().split(/\s+/);
-      const cmd = (parts[10] ?? '').split('/').pop()?.toLowerCase() ?? '';
-      if (PROCESS_MATCHERS.node(cmd)) info.nodeCount++;
-      if (PROCESS_MATCHERS.claude(cmd)) info.claudeCount++;
-      if (PROCESS_MATCHERS.cursor(cmd)) info.cursorCount++;
-      if (PROCESS_MATCHERS.codex(cmd)) info.codexCount++;
-      if (PROCESS_MATCHERS.vscode(cmd)) info.vscodeCount++;
-      if (PROCESS_MATCHERS.browser(cmd)) info.edgeChromeTabs++;
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/);
+      if (!match) continue;
+      const [, pid, ppid, rssKB, comm, args] = match;
+      const name = comm.split('/').pop() ?? comm;
+      const command = redactCommandLine(args || comm);
+      addProcessCounts(info, name);
+      const classification = classifyProcess(name, command);
+      if (classification.protected) info.protectedCount++;
+      info.processes.push({
+        pid: safeInt(pid),
+        parentPid: safeInt(ppid),
+        name,
+        memMB: Math.round((safeInt(rssKB) / 1024) * 10) / 10,
+        command,
+        reasoning: processReasoning(classification),
+        actionHint: processActionHint(classification),
+        ...classification,
+      });
     }
+
+    info.processes = info.processes
+      .sort((a, b) => b.memMB - a.memMB);
+    info.topConsumers = info.processes.slice(0, 20);
   }
 
   return info;
