@@ -87,6 +87,7 @@ Exposes three tools: `pp_audit`, `pp_trend`, `pp_fix`.
 | `pp inspect [--all|--json]` | Process census with memory, command, role, reasoning, and protected-process classification |
 | `pp watch [--seconds N] [--interval N] [--log path]` | Bounded process start/stop ledger for Starlight/JarvisOps ingestion |
 | `pp maintain [--json]` | Predict maintenance posture, swarm posture, and safe action paths |
+| `pp preflight --workload <type> [--reserve-gb N] [--json]` | Admit, bound, or hold CPU/RAM-intensive work against live machine headroom |
 | `pp overnight [--write|--json|--md]` | Build an overnight swarm guard plan with Queen/SDS/process instructions |
 | `pp snapshot [notes]` | Screenshot both screens + audit + agent census |
 
@@ -206,6 +207,20 @@ The watcher is bounded by default and is not an always-on background service.
 pp maintain
 pp maintain --json
 ```
+
+### Workload preflight
+
+Run preflight before builds, browser QA, local models, new swarms, or unattended work:
+
+```bash
+pp preflight --workload build
+pp preflight --workload browser-qa --json
+pp preflight --workload local-model --reserve-gb 16
+pp preflight --workload swarm
+pp preflight --workload overnight
+```
+
+The decision is `allow`, `bounded`, or `hold`. PP keeps a 4GB operating-system and application safety floor in addition to the workload reserve. `hold` exits with code 2 and is used only for genuine headroom shortfalls, restart posture, or critical conditions affecting heavy/unattended work. Preflight is read-only: it never starts, stops, schedules, or cleans processes.
 
 The command predicts and routes work; it does not stop processes, restart the machine, mutate cloud services, or launch new agents.
 

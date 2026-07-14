@@ -37,6 +37,11 @@ function runPS(script: string, timeout = 10_000): string {
   return runFile('powershell', ['-NoProfile', '-NoLogo', '-Command', script], timeout);
 }
 
+function sleepSync(milliseconds: number): void {
+  const signal = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+  Atomics.wait(signal, 0, 0, milliseconds);
+}
+
 // ─── MEMORY ─────────────────────────────────────────────────────
 export interface MemoryInfo {
   totalMB: number;
@@ -57,6 +62,8 @@ export interface CpuInfo {
   cores: number;
   logicalCores: number;
   loadPct: number; // 0-100 CPU usage percentage
+  systemLoadPct: number; // kernel + interrupt share of sampled CPU time
+  sampleMs: number;
 }
 
 export function probeCpu(): CpuInfo {
@@ -65,36 +72,98 @@ export function probeCpu(): CpuInfo {
 
   // Physical cores: platform-specific
   let cores = Math.ceil(logicalCores / 2); // default: assume HT
-  if (os.platform() === 'win32') {
-    const wmicOut = runFile('wmic', ['cpu', 'get', 'NumberOfCores', '/format:list']);
-    const match = wmicOut.match(/NumberOfCores=(\d+)/);
-    if (match) cores = safeInt(match[1]);
-  } else if (os.platform() === 'darwin') {
+  if (os.platform() === 'darwin') {
     const out = runFile('sysctl', ['-n', 'hw.physicalcpu']);
     if (out) cores = safeInt(out);
-  } else {
+  } else if (os.platform() === 'linux') {
     // Linux: count unique core ids
     const out = runFile('grep', ['-c', '^processor', '/proc/cpuinfo']);
     if (out) cores = Math.ceil(safeInt(out) / 2);
   }
 
-  // CPU load: os.loadavg() returns [0,0,0] on Windows — use wmic instead
-  let loadPct = 0;
-  if (os.platform() === 'win32') {
-    const wmicLoad = runFile('wmic', ['cpu', 'get', 'LoadPercentage', '/format:list']);
-    const loadMatch = wmicLoad.match(/LoadPercentage=(\d+)/);
-    if (loadMatch) loadPct = safeInt(loadMatch[1]);
-  } else {
-    const avg = os.loadavg()[0] ?? 0;
-    loadPct = Math.min(100, Math.round((avg / logicalCores) * 100));
+  // A short os.cpus() delta is fast, cross-platform, and avoids deprecated WMIC timeouts.
+  const sampleMs = 350;
+  const before = os.cpus();
+  sleepSync(sampleMs);
+  const after = os.cpus();
+  let idleDelta = 0;
+  let totalDelta = 0;
+  let systemDelta = 0;
+  for (let index = 0; index < Math.min(before.length, after.length); index++) {
+    const start = before[index].times;
+    const end = after[index].times;
+    const idle = Math.max(0, end.idle - start.idle);
+    const system = Math.max(0, end.sys - start.sys) + Math.max(0, end.irq - start.irq);
+    const total = Math.max(0,
+      (end.user - start.user) +
+      (end.nice - start.nice) +
+      (end.sys - start.sys) +
+      (end.idle - start.idle) +
+      (end.irq - start.irq)
+    );
+    idleDelta += idle;
+    systemDelta += system;
+    totalDelta += total;
   }
+  const loadPct = totalDelta > 0 ? Math.min(100, Math.max(0, Math.round((1 - idleDelta / totalDelta) * 100))) : 0;
+  const systemLoadPct = totalDelta > 0 ? Math.min(100, Math.max(0, Math.round(systemDelta / totalDelta * 100))) : 0;
 
   return {
     model: cpus[0]?.model ?? 'unknown',
     cores,
     logicalCores,
     loadPct,
+    systemLoadPct,
+    sampleMs,
   };
+}
+
+// ─── RECENT APPLICATION CRASHES ───────────────────────────────
+export interface CrashLoopInfo {
+  windowMinutes: number;
+  totalCrashes: number;
+  topApp: string;
+  topAppCrashes: number;
+  apps: Array<{ name: string; count: number }>;
+}
+
+export function probeCrashLoops(windowMinutes = 15): CrashLoopInfo {
+  const boundedMinutes = Math.max(1, Math.min(120, Math.round(windowMinutes)));
+  const empty: CrashLoopInfo = {
+    windowMinutes: boundedMinutes,
+    totalCrashes: 0,
+    topApp: '',
+    topAppCrashes: 0,
+    apps: [],
+  };
+  if (os.platform() !== 'win32') return empty;
+
+  const script = [
+    '$ErrorActionPreference = "SilentlyContinue";',
+    `$events = @(Get-WinEvent -FilterHashtable @{LogName="Application"; Id=1000; StartTime=(Get-Date).AddMinutes(-${boundedMinutes})});`,
+    '$apps = @();',
+    'foreach ($event in $events) { if ($event.Message -match "Faulting application name:\\s*([^,\\r\\n]+)") { $apps += $Matches[1].Trim() } };',
+    '$groups = @($apps | Group-Object | Sort-Object Count -Descending | Select-Object -First 10 @{n="name";e={$_.Name}},@{n="count";e={$_.Count}});',
+    '$top = $groups | Select-Object -First 1;',
+    `[pscustomobject]@{windowMinutes=${boundedMinutes};totalCrashes=$apps.Count;topApp=if($top){$top.name}else{""};topAppCrashes=if($top){$top.count}else{0};apps=$groups} | ConvertTo-Json -Compress -Depth 4`,
+  ].join(' ');
+
+  const raw = runPS(script, 8_000);
+  if (!raw) return empty;
+  try {
+    const parsed = JSON.parse(raw) as Partial<CrashLoopInfo>;
+    return {
+      windowMinutes: boundedMinutes,
+      totalCrashes: Number(parsed.totalCrashes ?? 0),
+      topApp: String(parsed.topApp ?? ''),
+      topAppCrashes: Number(parsed.topAppCrashes ?? 0),
+      apps: Array.isArray(parsed.apps)
+        ? parsed.apps.map(app => ({ name: String(app.name ?? ''), count: Number(app.count ?? 0) }))
+        : [],
+    };
+  } catch {
+    return empty;
+  }
 }
 
 // ─── DISK ───────────────────────────────────────────────────────
@@ -195,6 +264,12 @@ export interface ProcessInfo {
   vscodeCount: number;
   edgeChromeTabs: number;
   protectedCount: number;
+  codexTaskRuntimeCount: number;
+  mcpCount: number;
+  mcpProcessCount: number;
+  mcpMemoryMB: number;
+  duplicateMcpProcesses: number;
+  agentTreeMemoryMB: number;
   processes: ProcessConsumer[];
   topConsumers: ProcessConsumer[];
 }
@@ -298,7 +373,12 @@ function redactCommandLine(command: string): string {
 function classifyProcess(name: string, command: string): Pick<ProcessConsumer, 'role' | 'protected' | 'protectionReason'> {
   const n = name.toLowerCase();
   const cmd = command.toLowerCase();
-  const looksLikeMcpServer =
+  const canHostOrLaunchMcp = new Set([
+    'node.exe', 'node', 'python.exe', 'python', 'pythonw.exe', 'pythonw',
+    'bun.exe', 'bun', 'deno.exe', 'deno', 'railway.exe', 'railway',
+    'cmd.exe', 'cmd', 'bash.exe', 'bash', 'sh.exe', 'sh',
+  ]).has(n);
+  const looksLikeMcpServer = canHostOrLaunchMcp && (
     cmd.includes('modelcontextprotocol') ||
     /(^|[\s"'\\/])(mcp|mcp-server|mcpserver)([\s"'\\/]|$)/.test(cmd) ||
     /(^|[\s"'\\/])(serve|server)\s+mcp([\s"']|$)/.test(cmd) ||
@@ -308,13 +388,22 @@ function classifyProcess(name: string, command: string): Pick<ProcessConsumer, '
     cmd.includes('railway.js" mcp') ||
     cmd.includes("railway.js' mcp") ||
     cmd.includes('railway.exe mcp') ||
-    cmd.includes('headroom mcp serve');
+    cmd.includes('mcp-server.js') ||
+    cmd.includes('starlight-mcp.js') ||
+    cmd.includes('mcp-obsidian') ||
+    cmd.includes('/packages/mcp/') ||
+    cmd.includes('\\packages\\mcp\\') ||
+    cmd.includes('headroom mcp serve')
+  );
 
   if (n.includes('antigravity') || cmd.includes('antigravity')) {
     return { role: 'ai-agent', protected: true, protectionReason: 'active coding-agent workspace' };
   }
   if (PROCESS_MATCHERS.claude(n) || PROCESS_MATCHERS.codex(n) || PROCESS_MATCHERS.cursor(n)) {
     return { role: 'ai-agent', protected: true, protectionReason: 'active AI agent session' };
+  }
+  if ((n === 'node_repl.exe' || n === 'node_repl') && cmd.includes('openai') && cmd.includes('codex')) {
+    return { role: 'ai-agent', protected: true, protectionReason: 'Codex task runtime' };
   }
   if (n.includes('lmstudio') || n.includes('llmster') || cmd.includes('.lmstudio') || n === 'ollama.exe' || n === 'ollama') {
     return { role: 'local-model', protected: true, protectionReason: 'local model runtime' };
@@ -412,6 +501,48 @@ function addProcessCounts(info: ProcessInfo, name: string): void {
   if (PROCESS_MATCHERS.browser(n)) info.edgeChromeTabs++;
 }
 
+function finalizeProcessInfo(info: ProcessInfo): void {
+  const mcpProcesses = info.processes.filter(proc => proc.role === 'mcp');
+  info.codexTaskRuntimeCount = info.processes.filter(proc => {
+    const name = proc.name.toLowerCase();
+    const command = proc.command.toLowerCase();
+    return (name === 'node_repl.exe' || name === 'node_repl') && command.includes('openai') && command.includes('codex');
+  }).length;
+  info.mcpProcessCount = mcpProcesses.length;
+  info.mcpMemoryMB = Math.round(mcpProcesses.reduce((sum, proc) => sum + proc.memMB, 0) * 10) / 10;
+
+  const mcpPids = new Set(mcpProcesses.map(proc => proc.pid));
+  const mcpParentPids = new Set(mcpProcesses.filter(proc => mcpPids.has(proc.parentPid)).map(proc => proc.parentPid));
+  const mcpServers = mcpProcesses.filter(proc => !mcpParentPids.has(proc.pid));
+  info.mcpCount = mcpServers.length;
+
+  const commandCounts = new Map<string, number>();
+  for (const proc of mcpServers) {
+    const signature = proc.command.toLowerCase().replace(/\s+/g, ' ').trim();
+    commandCounts.set(signature, (commandCounts.get(signature) ?? 0) + 1);
+  }
+  info.duplicateMcpProcesses = [...commandCounts.values()].reduce((sum, count) => sum + Math.max(0, count - 1), 0);
+
+  const children = new Map<number, number[]>();
+  for (const proc of info.processes) {
+    const siblings = children.get(proc.parentPid) ?? [];
+    siblings.push(proc.pid);
+    children.set(proc.parentPid, siblings);
+  }
+  const agentRoots = info.processes.filter(proc => proc.role === 'ai-agent' && (proc.name.toLowerCase() !== 'node_repl.exe' && proc.name.toLowerCase() !== 'node_repl'));
+  const agentTreePids = new Set<number>();
+  const queue = agentRoots.map(proc => proc.pid);
+  while (queue.length > 0) {
+    const pid = queue.shift();
+    if (pid === undefined || agentTreePids.has(pid)) continue;
+    agentTreePids.add(pid);
+    queue.push(...(children.get(pid) ?? []));
+  }
+  info.agentTreeMemoryMB = Math.round(info.processes
+    .filter(proc => agentTreePids.has(proc.pid))
+    .reduce((sum, proc) => sum + proc.memMB, 0) * 10) / 10;
+}
+
 function probeWindowsProcesses(info: ProcessInfo): boolean {
   const ps = [
     '$ErrorActionPreference = "SilentlyContinue";',
@@ -453,6 +584,7 @@ function probeWindowsProcesses(info: ProcessInfo): boolean {
 
   info.processes = consumers.sort((a, b) => b.memMB - a.memMB);
   info.topConsumers = info.processes.slice(0, 20);
+  finalizeProcessInfo(info);
 
   return true;
 }
@@ -467,6 +599,12 @@ export function probeProcesses(): ProcessInfo {
     vscodeCount: 0,
     edgeChromeTabs: 0,
     protectedCount: 0,
+    codexTaskRuntimeCount: 0,
+    mcpCount: 0,
+    mcpProcessCount: 0,
+    mcpMemoryMB: 0,
+    duplicateMcpProcesses: 0,
+    agentTreeMemoryMB: 0,
     processes: [],
     topConsumers: [],
   };
@@ -512,6 +650,7 @@ export function probeProcesses(): ProcessInfo {
     info.processes = info.processes
       .sort((a, b) => b.memMB - a.memMB);
     info.topConsumers = info.processes.slice(0, 20);
+    finalizeProcessInfo(info);
   }
 
   return info;

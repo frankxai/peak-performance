@@ -27,6 +27,8 @@ export interface AuditResult {
   hostname: string;
   platform: NodeJS.Platform;
   totalScore: number; // 0-100
+  rawScore: number; // sum of Ten Gate scores before critical health caps
+  scoreCaps: string[];
   grade: string;
   gates: GateScore[];
   recommendations: Recommendation[];

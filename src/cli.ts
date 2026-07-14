@@ -12,6 +12,7 @@
  *   pp inspect         Process census and top memory consumers
  *   pp watch           Bounded process start/stop ledger
  *   pp maintain        Predictive maintenance and swarm posture
+ *   pp preflight       Workload-aware admission decision
  *   pp overnight       Overnight swarm guard plan
  *   pp snapshot        Screenshot + audit bundle (archived)
  */
@@ -24,8 +25,9 @@ import { runPrepHandover } from './core/handover.js';
 import { probeProcesses } from './core/probes.js';
 import { runProcessWatch } from './core/process-ledger.js';
 import { buildMaintenancePlan } from './core/maintenance.js';
+import { buildPreflightPlan, isWorkloadType, WORKLOADS } from './core/preflight.js';
 import { buildOvernightGuardPlan, formatOvernightGuardMarkdown, writeOvernightGuardPlan } from './core/overnight.js';
-import { formatAudit, formatTrend, formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan } from './format/terminal.js';
+import { formatAudit, formatTrend, formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan, formatPreflightPlan } from './format/terminal.js';
 import { resolve } from 'node:path';
 
 // Respect NO_COLOR standard (https://no-color.org/)
@@ -192,6 +194,22 @@ switch (command) {
     break;
   }
 
+  case 'preflight': {
+    const workloadValue = readStringFlag('workload') ?? args[1] ?? 'interactive';
+    if (!isWorkloadType(workloadValue)) {
+      throw new Error(`Unknown workload "${workloadValue}". Use one of: ${WORKLOADS.join(', ')}.`);
+    }
+    const reserveGB = readNumberFlag('reserve-gb', Number.NaN);
+    const plan = buildPreflightPlan(workloadValue, {
+      cwd: process.cwd(),
+      reserveMB: Number.isFinite(reserveGB) ? reserveGB * 1_024 : undefined,
+    });
+    if (flags.has('--json')) console.log(JSON.stringify(plan, null, 2));
+    else console.log(formatPreflightPlan(plan));
+    if (plan.decision === 'hold') process.exitCode = 2;
+    break;
+  }
+
   case 'overnight':
   case 'guard': {
     const plan = buildOvernightGuardPlan(process.cwd());
@@ -248,6 +266,7 @@ switch (command) {
     pp inspect [--all|--json]        Process census + top memory consumers
     pp watch [--seconds N]           Bounded process start/stop ledger
     pp maintain [--json]             Predict maintenance + swarm posture
+    pp preflight --workload TYPE     Admit or hold a workload within live resource budgets
     pp overnight [--write|--json]     Overnight swarm guard plan
     pp snapshot [notes]              Screenshot + audit archive bundle
     pp prep                          Preserve agent state and prepare reboot
@@ -255,6 +274,9 @@ switch (command) {
   Environment:
     NO_COLOR=1                       Disable ANSI color codes
     PP_CWD=/path                     Override working directory
+
+  Preflight workloads:
+    ${WORKLOADS.join(', ')}
 `);
 }
 })().catch((err: unknown) => {

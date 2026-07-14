@@ -7,6 +7,7 @@ import type { AuditResult, TrendEntry } from '../types.js';
 import type { ProcessInfo } from '../core/probes.js';
 import type { MaintenancePlan } from '../core/maintenance.js';
 import type { OvernightGuardPlan } from '../core/overnight.js';
+import type { PreflightPlan } from '../core/preflight.js';
 
 type Theme = 'arcanea' | 'plain';
 
@@ -53,6 +54,9 @@ export function formatAudit(audit: AuditResult, theme: Theme = 'arcanea'): strin
   lines.push(`  ${audit.timestamp} | ${audit.hostname} | ${audit.platform}`);
   lines.push('');
   lines.push(`  Score: ${gc}\x1b[1m${audit.totalScore}/100\x1b[0m | Grade: ${gc}\x1b[1m${audit.grade}\x1b[0m`);
+  if (audit.scoreCaps.length > 0) {
+    lines.push(`  \x1b[31mCritical cap applied\x1b[0m (raw Ten Gate sum ${audit.rawScore}): ${audit.scoreCaps.join('; ')}`);
+  }
   lines.push('');
   lines.push('  \x1b[90m─────────────────────────────────────────────────\x1b[0m');
 
@@ -135,6 +139,7 @@ export function formatMaintenanceCompact(plan: MaintenancePlan, options: { color
     `${plan.posture}`,
     `swarms ${plan.swarmPosture}`,
     `RAM ${plan.metrics.ramUsedPct}% (${plan.metrics.ramFreeMB}MB free)`,
+    `CPU ${plan.metrics.cpuLoadPct}%`,
     `proc ${plan.metrics.totalProcesses}`,
   ].join(' | ') + actionStr;
 }
@@ -151,6 +156,7 @@ export function formatMarkdown(audit: AuditResult, theme: Theme = 'arcanea'): st
   lines.push(`# Peak Performance Audit — ${audit.timestamp.slice(0, 10)}`);
   lines.push('');
   lines.push(`**Score:** ${audit.totalScore}/100 | **Grade:** ${audit.grade}`);
+  if (audit.scoreCaps.length > 0) lines.push(`**Critical cap:** raw Ten Gate sum ${audit.rawScore}; ${audit.scoreCaps.join('; ')}`);
   lines.push(`**Host:** ${audit.hostname} | **Platform:** ${audit.platform}`);
   lines.push('');
   lines.push('## Gate Scores');
@@ -185,7 +191,8 @@ export function formatProcessInspection(procs: ProcessInfo, limit = 20): string 
   lines.push('');
   lines.push('\x1b[1m  Peak Performance Process Inspection\x1b[0m');
   lines.push('');
-  lines.push(`  Total: ${procs.totalProcesses} | Agents: ${agents} | Node: ${procs.nodeCount} | Protected: ${procs.protectedCount}`);
+  lines.push(`  Total: ${procs.totalProcesses} | Named agents: ${agents} | Codex task runtimes: ${procs.codexTaskRuntimeCount} | Node: ${procs.nodeCount} | Protected: ${procs.protectedCount}`);
+  lines.push(`  MCP: ${procs.mcpCount} servers (${procs.mcpProcessCount} tree processes) / ${procs.mcpMemoryMB}MB | Duplicate server copies: ${procs.duplicateMcpProcesses} | Agent tree: ${procs.agentTreeMemoryMB}MB`);
   lines.push(`  Browsers: ${procs.edgeChromeTabs} | Editors: ${procs.vscodeCount}`);
   lines.push(`  Showing: ${visibleRows.length}/${rows.length} process rows`);
   lines.push('');
@@ -220,7 +227,10 @@ export function formatMaintenancePlan(plan: MaintenancePlan): string {
   lines.push('');
   lines.push(`  ${plan.summary}`);
   lines.push(`  RAM: ${plan.metrics.ramUsedPct}% used (${plan.metrics.ramFreeMB}MB free) | Disk: ${plan.metrics.diskFreeGB}GB free | Uptime: ${plan.metrics.uptimeHours}h`);
-  lines.push(`  Processes: ${plan.metrics.totalProcesses} total | ${plan.metrics.namedAgentCount} named agents | ${plan.metrics.nodeCount} node | ${plan.metrics.reviewableCount} reviewable`);
+  lines.push(`  CPU: ${plan.metrics.cpuLoadPct}% busy (${plan.metrics.cpuSystemLoadPct}% system/kernel)`);
+  lines.push(`  Processes: ${plan.metrics.totalProcesses} total | ${plan.metrics.namedAgentCount} named agents | ${plan.metrics.codexTaskRuntimeCount} Codex task runtimes | ${plan.metrics.nodeCount} node | ${plan.metrics.reviewableCount} reviewable`);
+  lines.push(`  MCP: ${plan.metrics.mcpCount} servers (${plan.metrics.mcpProcessCount} tree processes) / ${plan.metrics.mcpMemoryMB}MB | ${plan.metrics.duplicateMcpProcesses} duplicate server copies | agent tree ${plan.metrics.agentTreeMemoryMB}MB`);
+  if (plan.metrics.crashLoopCount > 0) lines.push(`  Crashes: ${plan.metrics.crashLoopApp} ${plan.metrics.crashLoopCount}x (${plan.metrics.recentCrashCount} total) in the recent window`);
   lines.push('');
   lines.push('  Reasons');
   for (const reason of plan.reasons) lines.push(`  - ${reason}`);
@@ -239,6 +249,39 @@ export function formatMaintenancePlan(plan: MaintenancePlan): string {
   lines.push('  Reviewable roles: ' + JSON.stringify(plan.reviewableRoles));
   lines.push('');
 
+  return lines.join('\n');
+}
+
+export function formatPreflightPlan(plan: PreflightPlan): string {
+  const lines: string[] = [];
+  const color = plan.decision === 'allow' ? '\x1b[32m' : plan.decision === 'bounded' ? '\x1b[33m' : '\x1b[31m';
+
+  lines.push('');
+  lines.push('\x1b[1m  Peak Performance Workload Preflight\x1b[0m');
+  lines.push('');
+  lines.push(`  Decision: ${color}\x1b[1m${plan.decision.toUpperCase()}\x1b[0m | Workload: ${plan.workload}`);
+  lines.push(`  ${plan.summary}`);
+  lines.push(`  PP: ${plan.posture} | Swarms: ${plan.swarmPosture}`);
+  lines.push(`  RAM: ${plan.current.ramFreeMB}MB free | Required: ${plan.budget.requiredFreeMB}MB | Projected: ${plan.budget.projectedFreeMB}MB`);
+  lines.push(`  CPU: ${plan.current.cpuLoadPct}% (ceiling ${plan.budget.cpuCeilingPct}%) | Task runtimes: ${plan.current.codexTaskRuntimes}/${plan.budget.maxTaskRuntimes}`);
+  lines.push(`  Limit: ${plan.budget.maxParallelism} parallel | Timeout: ${plan.budget.timeoutMinutes || 'interactive'} minutes`);
+
+  if (plan.hardBlocks.length > 0) {
+    lines.push('');
+    lines.push('  Hard blocks');
+    for (const item of plan.hardBlocks) lines.push(`  - ${item}`);
+  }
+  if (plan.constraints.length > 0) {
+    lines.push('');
+    lines.push('  Constraints');
+    for (const item of plan.constraints) lines.push(`  - ${item}`);
+  }
+  if (plan.actions.length > 0) {
+    lines.push('');
+    lines.push('  Required actions');
+    for (const item of plan.actions) lines.push(`  - ${item}`);
+  }
+  lines.push('');
   return lines.join('\n');
 }
 
