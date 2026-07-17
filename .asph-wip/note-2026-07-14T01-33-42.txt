@@ -1,0 +1,6 @@
+ASPH WIP
+Branch: codex/pp-live-pressure-20260710
+Objective: N/A
+Touched: M README.md  M package.json  M src/cli.ts  M src/core/audit.ts  M src/core/maintenance.ts  M src/core/probes.ts  M src/format/terminal.ts  M src/gates/scoring.ts  M src/index.ts  M src/integrations/mcp-server/index.ts
+Resume with: git reset HEAD~1 --mixed
+Full prompt + visual console in agentic-ops/lifecycle/asph-genius-recovery.html

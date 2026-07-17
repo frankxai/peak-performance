@@ -1,0 +1,3993 @@
+diff --git a/.asph-wip/asph-2026-07-07T23-43-28.patch b/.asph-wip/asph-2026-07-07T23-43-28.patch
+new file mode 100644
+index 0000000..e6b80f4
+--- /dev/null
++++ b/.asph-wip/asph-2026-07-07T23-43-28.patch
+@@ -0,0 +1,2455 @@
++diff --git a/.agent-harness.json b/.agent-harness.json
++new file mode 100644
++index 0000000..9d64362
++--- /dev/null
+++++ b/.agent-harness.json
++@@ -0,0 +1,45 @@
+++﻿{
+++    "name":  "peak-performance",
+++    "classification":  "tooling",
+++    "owner":  "FrankX AI",
+++    "updated":  "2026-06-19",
+++    "remote":  "https://github.com/frankxai/peak-performance.git",
+++    "health":  {
+++                   "primaryCheck":  "npm run build",
+++                   "manualChecks":  [
+++                                        "Review AGENTS.md before edits",
+++                                        "Preserve user work and dirty files",
+++                                        "Scan public outputs for secrets and private memory"
+++                                    ]
+++               },
+++    "agentGuidance":  {
+++                          "readAgentsMd":  true,
+++                          "avoidPrivateMemory":  true,
+++                          "preserveExistingConventions":  true,
+++                          "designTasteKernel":  {
+++                                                    "enabled":  true,
+++                                                    "root":  "C:\\Users\\frank\\starlight\\repos",
+++                                                    "files":  [
+++                                                                  "C:\\Users\\frank\\starlight\\repos\\DESIGN_TASTE.md",
+++                                                                  "C:\\Users\\frank\\starlight\\repos\\WEB_EXPERIENCE_STANDARD.md",
+++                                                                  "C:\\Users\\frank\\starlight\\repos\\MOTION_TASTE_RUBRIC.md",
+++                                                                  "C:\\Users\\frank\\starlight\\repos\\MULTI_AGENT_DESIGN_COUNCIL.md",
+++                                                                  "C:\\Users\\frank\\starlight\\repos\\VISUAL_QA_GATE.md"
+++                                                              ],
+++                                                    "appliesTo":  [
+++                                                                      "site",
+++                                                                      "app",
+++                                                                      "landing-page",
+++                                                                      "dashboard",
+++                                                                      "visual-identity",
+++                                                                      "brand",
+++                                                                      "motion",
+++                                                                      "media",
+++                                                                      "social",
+++                                                                      "frontend"
+++                                                                  ],
+++                                                    "motionPlugin":  "motion-design-studio",
+++                                                    "visualVerificationRequired":  true
+++                                                }
+++                      }
+++}
++diff --git a/AGENTS.md b/AGENTS.md
++new file mode 100644
++index 0000000..a3e2ab8
++--- /dev/null
+++++ b/AGENTS.md
++@@ -0,0 +1,41 @@
+++﻿# Repository Instructions
+++
+++This repo is part of the FrankX / Starlight / Arcanea agent estate.
+++
+++## Classification
+++
+++- Repo: $title
+++- Class: $Classification
+++- Default health command: $HealthCommand
+++- Remote: $Remote
+++
+++## Agent Rules
+++
+++- Read this file before making changes.
+++- Preserve existing user work and unrelated dirty files.
+++- Keep edits scoped to the requested task.
+++- Prefer existing repo conventions over new abstractions.
+++- Run the health command before handoff when feasible.
+++- Do not publish secrets, private memory, credentials, or internal-only strategy.
+++
+++## Class-Specific Guidance
+++
+++- Keep utility commands safe and documented.
+++- Validate scripts before recommending operational use.
+++
+++## Handoff
+++
+++Summarize changed files, validation run, risks, and any follow-up needed.
+++
+++## Design Taste Kernel
+++
+++For any site, app, landing page, dashboard, visual identity, brand, motion, media, social, or frontend task, apply the shared Design Taste Kernel before handoff:
+++
+++- C:\Users\frank\starlight\repos\DESIGN_TASTE.md
+++- C:\Users\frank\starlight\repos\WEB_EXPERIENCE_STANDARD.md
+++- C:\Users\frank\starlight\repos\MOTION_TASTE_RUBRIC.md
+++- C:\Users\frank\starlight\repos\MULTI_AGENT_DESIGN_COUNCIL.md
+++- C:\Users\frank\starlight\repos\VISUAL_QA_GATE.md
+++
+++When motion, scroll, generated media, GIF/video, or premium polish matters, route through the Motion Design Studio plugin/skills and verify the result visually.
+++
++diff --git a/README.md b/README.md
++index d2115e7..5550eb6 100644
++--- a/README.md
+++++ b/README.md
++@@ -84,6 +84,10 @@ Exposes three tools: `pp_audit`, `pp_trend`, `pp_fix`.
++ | `pp trend [N]` | Show last N score entries with delta |
++ | `pp fix` | Run auto-fixable repairs (npm cache, temp files) |
++ | `pp compact` | One-line status: `PP 80/A- 3WARN` |
+++| `pp inspect [--all|--json]` | Process census with memory, command, role, reasoning, and protected-process classification |
+++| `pp watch [--seconds N] [--interval N] [--log path]` | Bounded process start/stop ledger for Starlight/JarvisOps ingestion |
+++| `pp maintain [--json]` | Predict maintenance posture, swarm posture, and safe action paths |
+++| `pp overnight [--write|--json|--md]` | Build an overnight swarm guard plan with Queen/SDS/process instructions |
++ | `pp snapshot [notes]` | Screenshot both screens + audit + agent census |
++ 
++ ## The Ten Gates
++@@ -152,10 +156,77 @@ The Python tray app (`tray/`) provides always-on monitoring:
++ 
++ - `npm cache clean --force` — frees GB of cached packages
++ - Clean temp files older than 3 days
++-- More fixes coming (orphan node cleanup, git gc, etc.)
+++- More fixes coming (git gc, cache cleanup, and supervised maintenance tasks)
++ 
++ Before/after score comparison is shown automatically.
++ 
+++`pp fix` does not kill user-owned processes. Use `pp inspect` first, then write a process action receipt before terminating anything ambiguous or user-facing.
+++
+++## Process Inspection
+++
+++`pp inspect` lists process rows with PID, parent PID, memory, role, redacted command line, reasoning, action hint, and a guard label. AI agents, local model runtimes, MCP/tool servers, editors, and supervised dev servers are treated as protected by default.
+++
+++Use this for RAM triage before taking action:
+++
+++```bash
+++pp inspect
+++pp inspect --all
+++pp inspect --json
+++```
+++
+++Process cleanup policy lives in `docs/process-action-receipts.md`.
+++
+++## Process Ledger
+++
+++`pp watch` samples process state for a bounded window and appends start/stop events to a local JSONL ledger. This is meant for the Starlight/JarvisOps control plane and Queen-style orchestration to understand what started, why it was classified that way, and what the safe action path is.
+++
+++```bash
+++pp watch --seconds 60 --interval 2
+++pp watch --seconds 300 --log "$HOME/.starlight/process-ledger/process-events.jsonl"
+++```
+++
+++Default ledger path:
+++
+++```text
+++~/.starlight/process-ledger/process-events.jsonl
+++```
+++
+++The watcher is bounded by default and is not an always-on background service.
+++
+++## Predictive Maintenance
+++
+++`pp maintain` turns the audit and process map into an operating posture:
+++
+++- maintenance posture: `green`, `watch`, `constrain`, `maintenance`, or `restart-soon`
+++- swarm posture: `expand`, `steady`, `pause-new-swarms`, or `drain-and-handoff`
+++- reasons for the posture
+++- action list with owner, permission type, command hint, risk, and receipt requirement
+++
+++```bash
+++pp maintain
+++pp maintain --json
+++```
+++
+++The command predicts and routes work; it does not stop processes, restart the machine, mutate cloud services, or launch new agents.
+++
+++## Overnight Guard
+++
+++`pp overnight` builds a non-destructive overnight operating packet for Starlight swarms. It combines the maintenance posture, protected process classes, reviewable process candidates, SDS guidance, process-watch command, and Queen/agent instructions into one guard plan.
+++
+++```bash
+++pp overnight
+++pp overnight --write
+++pp overnight --json
+++```
+++
+++`--write` saves JSON and Markdown reports under:
+++
+++```text
+++~/.starlight/overnight-guard/
+++```
+++
+++The overnight guard does not kill processes, start background daemons, launch agents, or mutate cloud services. It is an operator packet for the Starlight Queen, Command Center, JarvisOps, SDS, and future agents.
+++
++ ## Snapshot
++ 
++ `pp snapshot` captures a full system state archive:
++diff --git a/docs/process-action-receipts.md b/docs/process-action-receipts.md
++new file mode 100644
++index 0000000..8bcd52f
++--- /dev/null
+++++ b/docs/process-action-receipts.md
++@@ -0,0 +1,78 @@
+++# Process Action Receipts
+++
+++Peak Performance can identify pressure, but it must not silently decide what work is disposable.
+++Use this receipt flow before terminating user-owned processes.
+++
+++## Default Flow
+++
+++1. Run `pp inspect` or an equivalent process census.
+++2. Record the candidate process tree before acting:
+++   - PID and parent PID
+++   - executable name
+++   - redacted command line
+++   - memory footprint
+++   - likely repo or working directory when discoverable
+++   - reason it is believed safe to stop
+++3. Classify the process:
+++   - `protected`: AI agent sessions, local model runtimes, MCP/tool servers, editors, supervised dev servers, OS processes.
+++   - `review`: build jobs, generators, orphaned node processes, browsers, shells, unknowns.
+++4. Ask before terminating user-owned or ambiguous processes.
+++5. After acting, record:
+++   - exact command used
+++   - before/after RAM or disk state
+++   - what was not touched
+++   - how to resume or regenerate the work
+++
+++## Receipt Template
+++
+++Use this shape for receipts:
+++
+++    # Process Action Receipt - YYYY-MM-DD - <short-name>
+++
+++    ## Action
+++
+++    - Decision:
+++    - Command:
+++    - Operator:
+++    - Time:
+++
+++    ## Process Tree
+++
+++    ```text
+++    PID <pid> <name> <redacted command>
+++      PID <child> <name> <redacted command>
+++    ```
+++
+++    ## Classification
+++
+++    - Role:
+++    - Guard:
+++    - Confidence:
+++    - Reason:
+++
+++    ## Evidence
+++
+++    - Candidate repo/path:
+++    - Related package script:
+++    - Output or artifact paths:
+++    - Recent writes:
+++
+++    ## Impact
+++
+++    - Before:
+++    - After:
+++    - Freed:
+++    - Not touched:
+++
+++    ## Recovery
+++
+++    - Resume/regenerate command:
+++    - Validation:
+++    - Remaining risk:
+++
+++## Hard Rules
+++
+++- Do not kill local model runtimes just because they are large; Frank may be using them for local LLM work.
+++- Do not kill Claude, Codex, Cursor, editor, MCP, or dev-server processes without a specific coordination reason.
+++- Do not treat PP scoring recommendations as authorization. The score explains pressure; a human-readable receipt explains action.
+++- Prefer stopping project-owned dev servers through their supervisor script when one exists.
++diff --git a/docs/process-actions/2026-07-04-gen-html-termination.md b/docs/process-actions/2026-07-04-gen-html-termination.md
++new file mode 100644
++index 0000000..2e7a7a5
++--- /dev/null
+++++ b/docs/process-actions/2026-07-04-gen-html-termination.md
++@@ -0,0 +1,61 @@
+++# Process Action Receipt - 2026-07-04 - gen-html termination
+++
+++## Action
+++
+++- Decision: terminated one RAM-heavy generated-site job after user asked to free RAM and avoid strict/disruptive cleanup.
+++- Command used: `taskkill /PID 62360 /T /F`
+++- Operator: Codex
+++- Mode: manual review; not an automatic PP fix.
+++
+++## Process Tree
+++
+++```text
+++PID 62360 bash.exe "/c/Program Files/nodejs/npm" run gen:html
+++  PID 40684 node.exe npm-cli.js run gen:html
+++    PID 53376 bash.exe -c "node scripts/generate_interlinked_html.mjs"
+++      PID 62648 bash.exe -c "node scripts/generate_interlinked_html.mjs"
+++        PID 16692 node.exe scripts/generate_interlinked_html.mjs
+++```
+++
+++## Classification
+++
+++- Role: build/generation job.
+++- Guard: review, not protected.
+++- Confidence: high that it was a static HTML generation task; high that the likely repo was `frankx.ai-vercel-website`; lower confidence on the exact original working directory because the process was already gone when cwd reconstruction started.
+++- Reason: it was not an AI agent, local model runtime, MCP/tool server, editor, browser session, or local dev server. It was a one-shot npm script that can be rerun.
+++
+++## Evidence
+++
+++- Matching script in likely repo: `C:\Users\frank\starlight\repos\frankx.ai-vercel-website\scripts\generate_interlinked_html.mjs`.
+++- Matching package script: `"gen:html": "node scripts/generate_interlinked_html.mjs"`.
+++- Script behavior:
+++  - scans local `.md`, `.markdown`, `.txt`, and `.html` files under the repo;
+++  - excludes large/internal folders such as `.git`, `node_modules`, `.next`, `reading-site`, `content-universe`, `.archive`, `.obsidian`, `backups`, `docs`, and several legacy folders;
+++  - writes generated output to `reading-site` and `public/reading`;
+++  - builds a reading index and wraps content in static HTML.
+++- Fresh generated output was found in `frankx.ai-vercel-website`:
+++  - `reading-site\index.html`, about 62 MB, modified July 4, 2026.
+++  - `public\reading\index.html`, about 62 MB, modified July 4, 2026.
+++  - `public\reading\search-index.json`, about 5.2 MB, modified July 4, 2026.
+++- Git evidence in `frankx.ai-vercel-website` after termination:
+++  - `public/reading/index.html` changed by about 117,607 lines.
+++  - `public/reading/search-index.json` changed by about 46,227 lines.
+++  - 12 generated `public/reading` files showed modifications.
+++
+++## Impact
+++
+++- Before: about 4.27 GB RAM free, about 86.4% RAM used.
+++- After: about 5.38 GB RAM free, about 82.9% RAM used.
+++- Freed: about 1.1 GB RAM.
+++- Not touched: LM Studio/llmster local model workers, Claude, Codex, Antigravity, browsers, MCP/tooling processes, and dev servers.
+++
+++## Recovery
+++
+++If the generated reading output is needed, rerun from the likely repo:
+++
+++```powershell
+++cd C:\Users\frank\starlight\repos\frankx.ai-vercel-website
+++npm run gen:html
+++```
+++
+++Because the job was terminated after it had already written large generated files, treat the current `public/reading` and `reading-site` state as potentially partial until the script is rerun cleanly or the generated diff is intentionally discarded.
++diff --git a/docs/starlight-agent-action-policy.md b/docs/starlight-agent-action-policy.md
++new file mode 100644
++index 0000000..9d0baaa
++--- /dev/null
+++++ b/docs/starlight-agent-action-policy.md
++@@ -0,0 +1,103 @@
+++# Starlight Agent Action Policy
+++
+++Status: initial operating policy
+++Related work items: `ops-jarvisops-desktop-control-plane`, `ops-agent-run-ledger-calendar`
+++
+++## Purpose
+++
+++Starlight should create massive action without losing machine control. Agents can move quickly when the action class is clear, observable, reversible, and routed to the right supervisor.
+++
+++This policy defines what agents can do, what they cannot do, and how PP, SDS, JarvisOps, the Starlight Queen, and the run ledger interconnect.
+++
+++## Action Classes
+++
+++| Class | Agents may do? | Receipt | Approval | Examples |
+++|---|---:|---:|---:|---|
+++| Observe | Yes | Optional | No | `pp audit`, `pp inspect --json`, git status, read docs. |
+++| Bounded sample | Yes | Yes | No | `pp watch --seconds 60`, local metric snapshot. |
+++| Safe local fix | Yes when tool marks safe | Tool log | No | `pp fix` cache/temp cleanup only. |
+++| Supervisor action | Yes through supervisor | Supervisor state | Sometimes | `sds reap`, `sds stop -Port`, queue bounded Queen job. |
+++| Reviewable process reduction | Propose only | Required | Yes | Stop build/generator/node/shell process. |
+++| Agent/model interruption | Propose only | Required | Yes | Stop Claude/Codex/Antigravity/LM Studio/Ollama. |
+++| Destructive local change | Propose only | Required | Explicit | Delete repos, reset git, discard generated work. |
+++| External mutation | Propose only | Decision record | Explicit | Railway/Vercel/DNS/billing/secrets/connectors. |
+++
+++## Agent Capability Rules
+++
+++Agents may:
+++
+++- inspect process, disk, memory, git, and dev-server state;
+++- run bounded watches;
+++- write local receipts and decision records;
+++- propose a cleanup/restart plan;
+++- queue bounded Starlight Queen tasks;
+++- run safe local validation and build checks;
+++- stop supervised dev servers through SDS when policy allows it.
+++
+++Agents must not:
+++
+++- kill user-owned processes without confirmation;
+++- kill local model runtimes because they are large;
+++- interrupt active Claude, Codex, Antigravity, Cursor, editor, or MCP/tooling sessions without coordination;
+++- launch unbounded swarms when PP says `pause-new-swarms` or `drain-and-handoff`;
+++- install new swarm/MCP/orchestration tooling just because it is interesting; use the work-ledger pre-decision gate first;
+++- start duplicate localhost servers outside SDS;
+++- perform Railway, Vercel, DNS, billing, connector, or secret mutations without explicit approval;
+++- erase generated work without documenting recovery.
+++
+++## Massive Action Routing
+++
+++Use this route before spawning agents:
+++
+++1. Run `pp maintain`.
+++2. If swarm posture is `expand`, queue bounded work normally.
+++3. If `steady`, allow only high-value bounded work and prefer one agent per repo.
+++4. If `pause-new-swarms`, finish current work, avoid new parallelism, and run `pp inspect --all --json`.
+++5. If `drain-and-handoff`, stop launching new work, ask active agents for handoff, run `pp prep`, then consider restart/cleanup.
+++
+++Then choose the smallest sufficient orchestration pattern from the Starlight best-practice policy:
+++
+++```text
+++C:/Users/frank/starlight/repos/starlight-agent-config/core/policies/starlight-agent-orchestration-best-practices-2026-07-04.md
+++```
+++
+++Default ladder: function/script -> skill -> workflow -> router -> subagents -> swarm -> human approval. A swarm must have a work item, topology, stopping condition, and evidence path.
+++
+++## Maintenance Prediction
+++
+++`pp maintain` is the default preflight before:
+++
+++- starting a large local model;
+++- launching more than one coding agent;
+++- running a dev-server-heavy visual QA loop;
+++- starting long build/generation work;
+++- leaving the machine unattended with active agents;
+++- deciding whether to restart.
+++
+++`pp overnight --write` is the default handoff packet before leaving swarms running overnight. It does not authorize cleanup by itself; it records the current posture, guardrails, SDS guidance, no-touch classes, and review-before-stop classes.
+++
+++## Queen Integration
+++
+++The provisional Starlight Process Oversight Queen owns:
+++
+++- reading PP maintenance plans and process-ledger events;
+++- deciding whether the next hour is `expand`, `steady`, `pause`, or `drain`;
+++- creating queue tasks only when the machine posture allows it;
+++- asking agents to summarize state before restart;
+++- sending ambiguous cleanup to a human approval lane.
+++
+++The Queen does not directly kill processes. It routes actions to PP, SDS, JarvisOps, or a human confirmation step.
+++
+++## Recovery Standard
+++
+++Every reviewable reduction needs:
+++
+++- process tree;
+++- command line with secrets redacted;
+++- inferred repo/purpose;
+++- why it is safe to reduce;
+++- expected RAM/disk gain;
+++- recovery command;
+++- before/after state.
+++
+++Use `docs/process-action-receipts.md`.
++diff --git a/docs/starlight-process-oversight.md b/docs/starlight-process-oversight.md
++new file mode 100644
++index 0000000..d749b61
++--- /dev/null
+++++ b/docs/starlight-process-oversight.md
++@@ -0,0 +1,147 @@
+++# Starlight Process Oversight
+++
+++Status: initial operating design
+++Related work items: `ops-jarvisops-desktop-control-plane`, `ops-agent-run-ledger-calendar`
+++
+++## Purpose
+++
+++Peak Performance is the local sensor and reasoning layer for machine process health. It should help Starlight know what is running, why it likely exists, how much memory it takes, and what the safe reduction path is.
+++
+++It is not the execution authority. Process termination, dev-server shutdown, local model shutdown, and agent interruption still require the right supervisor path and, for ambiguous/user-owned work, explicit confirmation.
+++
+++## Orchestration Model
+++
+++| Layer | Responsibility |
+++|---|---|
+++| PP | Measure RAM/disk/process pressure, classify processes, redact commands, emit snapshots and process start/stop events. |
+++| Starlight Process Oversight Queen | Read PP process ledgers, maintain a narrative of what started and why, propose reductions, queue bounded follow-up tasks. |
+++| SO | Owns cross-repo operating doctrine, cost/risk gates, and routing between PP, JarvisOps, SDS, and agent ledgers. |
+++| JarvisOps Desktop | Visual control plane: manifests, support packets, action approvals, and operator UI. |
+++| Starlight Agent Run Ledger | Correlates process events with agent runs, PRs, tokens, recaps, and calendar projections. |
+++| SDS | Owns local dev-server lifecycle, TTL, review URLs, duplicate port prevention, and server shutdown. |
+++
+++Best-practice orchestration doctrine lives at:
+++
+++```text
+++C:/Users/frank/starlight/repos/starlight-agent-config/core/policies/starlight-agent-orchestration-best-practices-2026-07-04.md
+++```
+++
+++That policy is the routing authority for choosing a script, skill, workflow, router, subagent set, or full swarm. PP supplies the machine pressure gate and process evidence; it does not decide that more agents are automatically better.
+++
+++## Current Data Contract
+++
+++`pp inspect --json` returns the full redacted process map:
+++
+++- PID and parent PID
+++- process name
+++- memory in MB
+++- role: `ai-agent`, `local-model`, `mcp`, `dev-server`, `build`, `node`, `browser`, `editor`, `shell`, `system`, or `other`
+++- protected flag
+++- protection reason when guarded
+++- reasoning
+++- action hint
+++- redacted command line
+++
+++`pp watch` appends JSONL start/stop events to:
+++
+++```text
+++~/.starlight/process-ledger/process-events.jsonl
+++```
+++
+++Each event includes the SO lane, the provisional `starlight-process-oversight-queen`, and related ledger work items.
+++
+++`pp maintain` returns the current maintenance posture and swarm posture:
+++
+++- `green`: machine can expand work.
+++- `watch`: proceed, but avoid casual extra load.
+++- `constrain`: pause new swarms and inspect before adding work.
+++- `maintenance`: drain current work and run supervised cleanup.
+++- `restart-soon`: preserve state and plan a restart after handoff.
+++
+++Action permissions are governed by `docs/starlight-agent-action-policy.md`.
+++
+++`pp overnight` returns a non-destructive overnight swarm guard plan. It combines the current maintenance plan, process policy, bounded watch command, SDS guidance, Queen instructions, no-touch classes, and review-before-stop classes. Use `pp overnight --write` before leaving swarms running for a long unattended window.
+++
+++## Reduction Rubric
+++
+++Protected by default:
+++
+++- Claude, Codex, Cursor, Antigravity, and active coding-agent workspaces.
+++- LM Studio, llmster, Ollama, and other local model runtimes.
+++- MCP/tool servers and agent bridges.
+++- Editor processes.
+++- Supervised dev servers; route through SDS.
+++- Windows system services, Defender, Memory Compression, shell host, desktop window manager, and core OS processes.
+++
+++Reviewable, never automatic:
+++
+++- Build and generation jobs.
+++- Generic node processes.
+++- Browser processes.
+++- Shells with child jobs.
+++- Unknown processes.
+++
+++Reduction requires:
+++
+++1. process receipt;
+++2. repo/path or owner inference when possible;
+++3. reason it is safe to stop;
+++4. before/after RAM or disk;
+++5. recovery command;
+++6. human confirmation unless the process is already covered by a safe supervisor action.
+++
+++## Startup Coverage
+++
+++PP cannot know intent perfectly from OS process data alone. The best operating model is layered:
+++
+++1. Agent launch wrappers emit run receipts.
+++2. SDS emits dev-server receipts.
+++3. PP `watch` emits process start/stop events.
+++4. JarvisOps merges those into a manifest and action UI.
+++5. The Process Oversight Queen summarizes the chain of reasoning and suggests bounded cleanup tasks.
+++
+++This keeps the system granular without turning PP into an unsafe always-on killer.
+++
+++## Predictive Loop
+++
+++Before launching heavy agent work:
+++
+++```powershell
+++pp maintain
+++```
+++
+++Before leaving swarms running overnight:
+++
+++```powershell
+++pp overnight --write
+++```
+++
+++If the swarm posture is `pause-new-swarms` or `drain-and-handoff`, the Queen should stop adding workers and request handoffs from active agents. If cleanup is needed, use the owner-specific path:
+++
+++- PP for safe cache/temp fixes.
+++- SDS for local dev servers.
+++- JarvisOps for approved local actions and support packets.
+++- Human approval for process termination, restart, external mutations, and secrets.
+++
+++## Topology Guidance
+++
+++When the machine posture allows parallel work, choose the smallest topology that matches the task:
+++
+++- single skill for focused work with one context owner;
+++- workflow for ordered steps with explicit checkpoints;
+++- router for classification and specialist dispatch;
+++- mesh for research, audits, and multi-perspective review;
+++- hierarchical for implementation with lead/worker/reviewer roles;
+++- star for QA/security/design/docs review around one artifact;
+++- ring for intake-to-release pipelines.
+++
+++If `pp maintain` returns `pause-new-swarms` or `drain-and-handoff`, do not start new mesh, star, hierarchical, ring, or adaptive swarms. Finish current work and preserve handoffs.
+++
+++## Future Work
+++
+++- Add repo/cwd inference for process rows where Windows exposes enough ancestry.
+++- Add a JarvisOps adapter that imports PP process-ledger JSONL.
+++- Add an SDS bridge so dev-server rows link to TTL and review URL state.
+++- Add topology and run-id fields to PP/JarvisOps operator packets.
+++- Add optional Windows process-creation event subscription only after a cost/risk review; default remains bounded polling.
+++- Add a weekly Queen report that summarizes new recurring processes, memory trends, reductions proposed, reductions accepted, and avoided unsafe actions.
++diff --git a/package.json b/package.json
++index d438199..4b19c40 100644
++--- a/package.json
+++++ b/package.json
++@@ -44,9 +44,9 @@
++   "engines": {
++     "node": ">=18"
++   },
++-  "dependencies": {},
++   "devDependencies": {
++-    "typescript": "^5.7.0",
++-    "tsx": "^4.19.0"
+++    "@types/node": "^26.1.0",
+++    "tsx": "^4.19.0",
+++    "typescript": "^5.7.0"
++   }
++ }
++diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
++new file mode 100644
++index 0000000..d373979
++--- /dev/null
+++++ b/pnpm-lock.yaml
++@@ -0,0 +1,329 @@
+++lockfileVersion: '9.0'
+++
+++settings:
+++  autoInstallPeers: true
+++  excludeLinksFromLockfile: false
+++
+++importers:
+++
+++  .:
+++    devDependencies:
+++      '@types/node':
+++        specifier: ^26.1.0
+++        version: 26.1.0
+++      tsx:
+++        specifier: ^4.19.0
+++        version: 4.23.0
+++      typescript:
+++        specifier: ^5.7.0
+++        version: 5.9.3
+++
+++packages:
+++
+++  '@esbuild/aix-ppc64@0.28.1':
+++    resolution: {integrity: sha512-Svl7tq8k/08+p6CXPpRjQ1fKX+1odH/BQbb48fV6fj3CWHhsoIOoY87w1oHXm0qEpkIK3ZfVgp0hed3XBXzXMQ==}
+++    engines: {node: '>=18'}
+++    cpu: [ppc64]
+++    os: [aix]
+++
+++  '@esbuild/android-arm64@0.28.1':
+++    resolution: {integrity: sha512-34EGEbCIAgosYz6goLcopX6Mo7NyGv9tfwEM2/7Ce2VcVRk568iSvniGWcUXIy7wEDR1wzolcxcriFVrWYcwBg==}
+++    engines: {node: '>=18'}
+++    cpu: [arm64]
+++    os: [android]
+++
+++  '@esbuild/android-arm@0.28.1':
+++    resolution: {integrity: sha512-0k2F129Xdio1TdJfzJ8sy1Q47vUD2NnwdhiAf7drUN1EBTfPf4hsFCtmMgu/6m8JSzsBrlmVjudMBQqOfG8usQ==}
+++    engines: {node: '>=18'}
+++    cpu: [arm]
+++    os: [android]
+++
+++  '@esbuild/android-x64@0.28.1':
+++    resolution: {integrity: sha512-dbwY7ltSMDWsRatcRpCnES4F+im88OCUgGZjy52shC7GqHRE/cYlxNbB4Z4UpJswpcc4Qxd2oE/ufM0p61IKng==}
+++    engines: {node: '>=18'}
+++    cpu: [x64]
+++    os: [android]
+++
+++  '@esbuild/darwin-arm64@0.28.1':
+++    resolution: {integrity: sha512-TZbWkQY7kvTAXbXUT7uVACR5cMHsDiSz9z7ZKAX/RTq/WJEk3QyRr0wZpNhBDX+/0CtdqUIJlOiodQcta6tY3Q==}
+++    engines: {node: '>=18'}
+++    cpu: [arm64]
+++    os: [darwin]
+++
+++  '@esbuild/darwin-x64@0.28.1':
+++    resolution: {integrity: sha512-zfdzgK9ACBNZLI/CyHTOx81SyNbM6YXn7rxSgX97VjyiPl9W1i4Ka4fgKECEoFCKGpvBj5qArWIGgQjOwkgskQ==}
+++    engines: {node: '>=18'}
+++    cpu: [x64]
+++    os: [darwin]
+++
+++  '@esbuild/freebsd-arm64@0.28.1':
+++    resolution: {integrity: sha512-wG2EA8ENdEI0qhkSZMjfqrdY+ziCYCPMmtZjjIwOmXFjmyzEHn+UUxk5of+SYsjtfs3VpnlC7QLzSI5hY/rOAw==}
+++    engines: {node: '>=18'}
+++    cpu: [arm64]
+++    os: [freebsd]
+++
+++  '@esbuild/freebsd-x64@0.28.1':
+++    resolution: {integrity: sha512-i7dZ9vQgnvSCzi/rYCXNgtF/U+eKZNJBzu3eTQbRgHnM7tNSizLOkRFAl3qzVc/Op/u5YkHHa4pf/3DOYHthLQ==}
+++    engines: {node: '>=18'}
+++    cpu: [x64]
+++    os: [freebsd]
+++
+++  '@esbuild/linux-arm64@0.28.1':
+++    resolution: {integrity: sha512-yHs+0uc8+nvEAfAfxrWQKK5peSNzBc4PegcMO0EJ2hT71uA7vB8Ihg2e77R2P7SG5uYjPbHlLLmve4LLLRCf0g==}
+++    engines: {node: '>=18'}
+++    cpu: [arm64]
+++    os: [linux]
+++
+++  '@esbuild/linux-arm@0.28.1':
+++    resolution: {integrity: sha512-qVXBOHQS+d5Y722GwJzJUtOLlX7km3CraOaGormF1pDtPd2C/l1SHRPgjLunLGe51Sh5YYWKMFDyV4SxgMQYTQ==}
+++    engines: {node: '>=18'}
+++    cpu: [arm]
+++    os: [linux]
+++
+++  '@esbuild/linux-ia32@0.28.1':
+++    resolution: {integrity: sha512-d1z4ZuP0ajrfz/FhGT4vv278rX8KnPPJx8i5+AtK7TYbx9Le9F1hyzurZpkEyjkGa9dUGhQow4C1NmeGvqxN2w==}
+++    engines: {node: '>=18'}
+++    cpu: [ia32]
+++    os: [linux]
+++
+++  '@esbuild/linux-loong64@0.28.1':
+++    resolution: {integrity: sha512-M5sRjUVZrkm1OAPR3dlOYzNmN+loZKGVi1VUQGrwuqLcbR6qeAz+famMhjASeH3YVKvZz+zT1jlh/keC3Rj/lg==}
+++    engines: {node: '>=18'}
+++    cpu: [loong64]
+++    os: [linux]
+++
+++  '@esbuild/linux-mips64el@0.28.1':
+++    resolution: {integrity: sha512-mRObBZeHh2OxcBFPWE/FjylkRgZdYuiTR3vaTozquCGOH14iP9oN4x4Ge81CoIDYQrXmIxpFumJBu5MtZpnQJQ==}
+++    engines: {node: '>=18'}
+++    cpu: [mips64el]
+++    os: [linux]
+++
+++  '@esbuild/linux-ppc64@0.28.1':
+++    resolution: {integrity: sha512-slScBsMAb3GFDcdrCgLwZtPYRoH2H/youv10QiZyRjmsP48fznoveWytSgCI/R0ZcUgpc0ZhIUEx6LHts8yrfQ==}
+++    engines: {node: '>=18'}
+++    cpu: [ppc64]
+++    os: [linux]
+++
+++  '@esbuild/linux-riscv64@0.28.1':
+++    resolution: {integrity: sha512-kw0owk1o0GFETUJyW0jc0G4Yzs0BHZn0JDZ8JRT088vjJYX777BAs1fDGxAC+q831qOs2DTC96mNsG2opdfyyQ==}
+++    engines: {node: '>=18'}
+++    cpu: [riscv64]
+++    os: [linux]
+++
+++  '@esbuild/linux-s390x@0.28.1':
+++    resolution: {integrity: sha512-/lAIjX8aYFRByhh6L5rYtPEDRqa9de/4V/juOXcta5frjvzXO4/sqEtyytse0g3zZFuWu5cDN0MkLz2qRDD2Ag==}
+++    engines: {node: '>=18'}
+++    cpu: [s390x]
+++    os: [linux]
+++
+++  '@esbuild/linux-x64@0.28.1':
+++    resolution: {integrity: sha512-u/anNYF2mmVOEDwLtnQ1wOr3EZ9sTNGLWrsYGYwHWzGA3Si84IOkHXlbWTD1NB+9/1lcnweYKO54uhxZydNzfA==}
+++    engines: {node: '>=18'}
+++    cpu: [x64]
+++    os: [linux]
+++
+++  '@esbuild/netbsd-arm64@0.28.1':
+++    resolution: {integrity: sha512-oks0DYbLwWMmaakTsCb+zL4E+aHRVLom9IJZOAthMQEPiQmydXHkziYEsGYRx0uNV/IjEKGAV941JzH02pflqw==}
+++    engines: {node: '>=18'}
+++    cpu: [arm64]
+++    os: [netbsd]
+++
+++  '@esbuild/netbsd-x64@0.28.1':
+++    resolution: {integrity: sha512-aeL6lAnN89Hz43Mlh1G8ARasbuoYvSITDEx0tHh5b7jJnHcssqgjy9Yx430GDpmCa6OyrKoS0aNRjKundRizGg==}
+++    engines: {node: '>=18'}
+++    cpu: [x64]
+++    os: [netbsd]
+++
+++  '@esbuild/openbsd-arm64@0.28.1':
+++    resolution: {integrity: sha512-MEFJe5C3R8pwXdZ5Y21oo6m7ePiS0d9pWucn99O/wvyJZChoIQKrQDxKrGeW8F5+T0okTHesAmDeiHDTIq0V/Q==}
+++    engines: {node: '>=18'}
+++    cpu: [arm64]
+++    os: [openbsd]
+++
+++  '@esbuild/openbsd-x64@0.28.1':
+++    resolution: {integrity: sha512-i/ZLIOafE0Z8cI/XANJAixoJL/uRAoS2xOA3rb0xN+KK0K177cMAsQYkzHtBrtMXAKuAc7HGgcWiZ/sRC1Nxgw==}
+++    engines: {node: '>=18'}
+++    cpu: [x64]
+++    os: [openbsd]
+++
+++  '@esbuild/openharmony-arm64@0.28.1':
+++    resolution: {integrity: sha512-ge+Z7EXFNt2BO1oAMsVpiQ8EwndV9i1xXerAeTIK7AtPs3bKFXQM7nlRxDSIUIMeueR1CNXxqztLzdNeReKBJg==}
+++    engines: {node: '>=18'}
+++    cpu: [arm64]
+++    os: [openharmony]
+++
+++  '@esbuild/sunos-x64@0.28.1':
+++    resolution: {integrity: sha512-BEjgtECkL3vY+SaSQ6nzVfiALUeFxpawyp8Jmf5PtYhf1Ug40N1h/hxlhts+f1FvSvarEigdxS3BlSMI2PJLcQ==}
+++    engines: {node: '>=18'}
+++    cpu: [x64]
+++    os: [sunos]
+++
+++  '@esbuild/win32-arm64@0.28.1':
+++    resolution: {integrity: sha512-lCv9eK/H6ZJWbE7bh2nw54CZ9M2nupBxJcTsdk/QQnWkdSjKGuxmmH8/GWrlT1eMmZfn4dGcCjRte397WqfQXA==}
+++    engines: {node: '>=18'}
+++    cpu: [arm64]
+++    os: [win32]
+++
+++  '@esbuild/win32-ia32@0.28.1':
+++    resolution: {integrity: sha512-zvb/mB2bSCoJOpoCBgYKKpX6YM6mJBlBUVUtVj41DlZJVEB6/0CKlRYxP5wWl1C1ILiCoAU5wZZ4q1P3qeS6Eg==}
+++    engines: {node: '>=18'}
+++    cpu: [ia32]
+++    os: [win32]
+++
+++  '@esbuild/win32-x64@0.28.1':
+++    resolution: {integrity: sha512-bm4Mowrv+GXMlpWX++EcXw/iLyd1o3+bJkC2DkWXYVvgZCqD/bSj9ctZeAMC3cIxgjRVR2Dufaiu4YPxr5gW1A==}
+++    engines: {node: '>=18'}
+++    cpu: [x64]
+++    os: [win32]
+++
+++  '@types/node@26.1.0':
+++    resolution: {integrity: sha512-O0A1G3xPGy4w7AgQdAQYUlQ+BKk2Oovw8eRpofyp5KdBZULnbe+WqaOVNrm705SHphCiG4XHsACrSmPu1f+Kgw==}
+++
+++  esbuild@0.28.1:
+++    resolution: {integrity: sha512-HrJrvZv5ayxBzPfwphOoNzkzOIIlifzk0KJrGK2c8R4+LKpMtpYLQeUdjnwjWv/LZlkH2laZk+4w78pi99D4Vw==}
+++    engines: {node: '>=18'}
+++    hasBin: true
+++
+++  fsevents@2.3.3:
+++    resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
+++    engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
+++    os: [darwin]
+++
+++  tsx@4.23.0:
+++    resolution: {integrity: sha512-eUdUIaCr963q2h5u3+QwvYp0+eqPvn+egeqZUm0hwERCqqx1E3kK5ehbGCvqSE5MQAULr67ww0cA3jKc3YkM1w==}
+++    engines: {node: '>=18.0.0'}
+++    hasBin: true
+++
+++  typescript@5.9.3:
+++    resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
+++    engines: {node: '>=14.17'}
+++    hasBin: true
+++
+++  undici-types@8.3.0:
+++    resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
+++
+++snapshots:
+++
+++  '@esbuild/aix-ppc64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/android-arm64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/android-arm@0.28.1':
+++    optional: true
+++
+++  '@esbuild/android-x64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/darwin-arm64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/darwin-x64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/freebsd-arm64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/freebsd-x64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/linux-arm64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/linux-arm@0.28.1':
+++    optional: true
+++
+++  '@esbuild/linux-ia32@0.28.1':
+++    optional: true
+++
+++  '@esbuild/linux-loong64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/linux-mips64el@0.28.1':
+++    optional: true
+++
+++  '@esbuild/linux-ppc64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/linux-riscv64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/linux-s390x@0.28.1':
+++    optional: true
+++
+++  '@esbuild/linux-x64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/netbsd-arm64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/netbsd-x64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/openbsd-arm64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/openbsd-x64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/openharmony-arm64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/sunos-x64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/win32-arm64@0.28.1':
+++    optional: true
+++
+++  '@esbuild/win32-ia32@0.28.1':
+++    optional: true
+++
+++  '@esbuild/win32-x64@0.28.1':
+++    optional: true
+++
+++  '@types/node@26.1.0':
+++    dependencies:
+++      undici-types: 8.3.0
+++
+++  esbuild@0.28.1:
+++    optionalDependencies:
+++      '@esbuild/aix-ppc64': 0.28.1
+++      '@esbuild/android-arm': 0.28.1
+++      '@esbuild/android-arm64': 0.28.1
+++      '@esbuild/android-x64': 0.28.1
+++      '@esbuild/darwin-arm64': 0.28.1
+++      '@esbuild/darwin-x64': 0.28.1
+++      '@esbuild/freebsd-arm64': 0.28.1
+++      '@esbuild/freebsd-x64': 0.28.1
+++      '@esbuild/linux-arm': 0.28.1
+++      '@esbuild/linux-arm64': 0.28.1
+++      '@esbuild/linux-ia32': 0.28.1
+++      '@esbuild/linux-loong64': 0.28.1
+++      '@esbuild/linux-mips64el': 0.28.1
+++      '@esbuild/linux-ppc64': 0.28.1
+++      '@esbuild/linux-riscv64': 0.28.1
+++      '@esbuild/linux-s390x': 0.28.1
+++      '@esbuild/linux-x64': 0.28.1
+++      '@esbuild/netbsd-arm64': 0.28.1
+++      '@esbuild/netbsd-x64': 0.28.1
+++      '@esbuild/openbsd-arm64': 0.28.1
+++      '@esbuild/openbsd-x64': 0.28.1
+++      '@esbuild/openharmony-arm64': 0.28.1
+++      '@esbuild/sunos-x64': 0.28.1
+++      '@esbuild/win32-arm64': 0.28.1
+++      '@esbuild/win32-ia32': 0.28.1
+++      '@esbuild/win32-x64': 0.28.1
+++
+++  fsevents@2.3.3:
+++    optional: true
+++
+++  tsx@4.23.0:
+++    dependencies:
+++      esbuild: 0.28.1
+++    optionalDependencies:
+++      fsevents: 2.3.3
+++
+++  typescript@5.9.3: {}
+++
+++  undici-types@8.3.0: {}
++diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml
++new file mode 100644
++index 0000000..5ed0b5a
++--- /dev/null
+++++ b/pnpm-workspace.yaml
++@@ -0,0 +1,2 @@
+++allowBuilds:
+++  esbuild: true
++diff --git a/src/cli.ts b/src/cli.ts
++index 4d29404..791d40a 100644
++--- a/src/cli.ts
+++++ b/src/cli.ts
++@@ -9,6 +9,10 @@
++  *   pp trend           Show score history
++  *   pp fix             Run auto-fixes
++  *   pp compact         One-line status for hooks/statusline
+++ *   pp inspect         Process census and top memory consumers
+++ *   pp watch           Bounded process start/stop ledger
+++ *   pp maintain        Predictive maintenance and swarm posture
+++ *   pp overnight       Overnight swarm guard plan
++  *   pp snapshot        Screenshot + audit bundle (archived)
++  */
++ import { runAudit } from './core/audit.js';
++@@ -17,7 +21,11 @@ import { TrendTracker } from './history/tracker.js';
++ import { runAllFixes } from './fixes/autofix.js';
++ import { takeSnapshot } from './core/snapshot.js';
++ import { runPrepHandover } from './core/handover.js';
++-import { formatAudit, formatTrend, formatCompact, formatJson, formatMarkdown } from './format/terminal.js';
+++import { probeProcesses } from './core/probes.js';
+++import { runProcessWatch } from './core/process-ledger.js';
+++import { buildMaintenancePlan } from './core/maintenance.js';
+++import { buildOvernightGuardPlan, formatOvernightGuardMarkdown, writeOvernightGuardPlan } from './core/overnight.js';
+++import { formatAudit, formatTrend, formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan } from './format/terminal.js';
++ import { resolve } from 'node:path';
++ 
++ // Respect NO_COLOR standard (https://no-color.org/)
++@@ -36,6 +44,29 @@ const flags = new Set(args.slice(1));
++ const theme = flags.has('--plain') ? 'plain' as const : 'arcanea' as const;
++ const historyPath = resolve(process.cwd(), '.pp', 'history.json');
++ 
+++function readNumberFlag(name: string, fallback: number): number {
+++  const inline = args.find(arg => arg.startsWith(`--${name}=`));
+++  if (inline) {
+++    const value = Number(inline.slice(name.length + 3));
+++    return Number.isFinite(value) ? value : fallback;
+++  }
+++  const index = args.indexOf(`--${name}`);
+++  if (index >= 0 && args[index + 1]) {
+++    const value = Number(args[index + 1]);
+++    return Number.isFinite(value) ? value : fallback;
+++  }
+++  return fallback;
+++}
+++
+++function readStringFlag(name: string): string | undefined {
+++  const inline = args.find(arg => arg.startsWith(`--${name}=`));
+++  if (inline) return inline.slice(name.length + 3);
+++  const index = args.indexOf(`--${name}`);
+++  if (index >= 0) return args[index + 1];
+++  return undefined;
+++}
+++
+++void (async () => {
++ switch (command) {
++   case 'audit': {
++     const audit = runAudit({ cwd: process.cwd() });
++@@ -95,8 +126,8 @@ switch (command) {
++   }
++ 
++   case 'compact': {
++-    const audit = runAudit({ cwd: process.cwd() });
++-    console.log(formatCompact(audit, theme));
+++    const plan = buildMaintenancePlan(process.cwd());
+++    console.log(formatMaintenanceCompact(plan));
++     break;
++   }
++ 
++@@ -108,6 +139,80 @@ switch (command) {
++     break;
++   }
++ 
+++  case 'inspect': {
+++    const procs = probeProcesses();
+++    if (flags.has('--json')) {
+++      console.log(JSON.stringify(procs, null, 2));
+++    } else {
+++      console.log(formatProcessInspection(procs, flags.has('--all') ? procs.processes.length : 20));
+++    }
+++    break;
+++  }
+++
+++  case 'watch': {
+++    const seconds = readNumberFlag('seconds', 60);
+++    const intervalSeconds = readNumberFlag('interval', 2);
+++    const logPath = readStringFlag('log');
+++    const summaryPath = readStringFlag('summary');
+++    const result = await runProcessWatch({
+++      seconds,
+++      intervalMs: Math.round(intervalSeconds * 1000),
+++      logPath,
+++      summaryPath,
+++    });
+++
+++    if (flags.has('--json')) {
+++      console.log(JSON.stringify(result, null, 2));
+++    } else {
+++      console.log('');
+++      console.log('  Peak Performance Process Watch');
+++      console.log(`  Samples: ${result.samples} | Started: ${result.started} | Stopped: ${result.stopped}`);
+++      console.log(`  Log: ${result.logPath}`);
+++      console.log(`  Summary: ${result.summaryPath}`);
+++      if (result.events.length > 0) {
+++        console.log('');
+++        for (const event of result.events.slice(-20)) {
+++          console.log(`  ${event.type.padEnd(5)} PID ${event.process.pid} ${event.process.name} ${event.process.memMB}MB ${event.process.role}`);
+++          console.log(`        ${event.process.reasoning}`);
+++        }
+++      }
+++      console.log('');
+++    }
+++    break;
+++  }
+++
+++  case 'maintain':
+++  case 'forecast': {
+++    const plan = buildMaintenancePlan(process.cwd());
+++    if (flags.has('--json')) {
+++      console.log(JSON.stringify(plan, null, 2));
+++    } else {
+++      console.log(formatMaintenancePlan(plan));
+++    }
+++    break;
+++  }
+++
+++  case 'overnight':
+++  case 'guard': {
+++    const plan = buildOvernightGuardPlan(process.cwd());
+++    const written = flags.has('--write') ? writeOvernightGuardPlan(plan, readStringFlag('dir')) : undefined;
+++
+++    if (flags.has('--json')) {
+++      console.log(JSON.stringify(written ? { ...plan, written } : plan, null, 2));
+++    } else if (flags.has('--md')) {
+++      console.log(formatOvernightGuardMarkdown(plan));
+++      if (written) console.log(`\nSaved: ${written.markdownFile}\nJSON: ${written.jsonFile}\n`);
+++    } else {
+++      console.log(formatOvernightGuardPlan(plan));
+++      if (written) {
+++        console.log(`  Saved guard report: ${written.markdownFile}`);
+++        console.log(`  Saved guard JSON: ${written.jsonFile}`);
+++        console.log('');
+++      }
+++    }
+++    break;
+++  }
+++
++   case 'snapshot': {
++     const notes = args.slice(1).join(' ') || undefined;
++     console.log('\n  Taking snapshot (audit + screenshots)...\n');
++@@ -140,6 +245,10 @@ switch (command) {
++     pp trend [N]                     Show last N score entries
++     pp fix                           Run auto-fixes
++     pp compact                       One-line status
+++    pp inspect [--all|--json]        Process census + top memory consumers
+++    pp watch [--seconds N]           Bounded process start/stop ledger
+++    pp maintain [--json]             Predict maintenance + swarm posture
+++    pp overnight [--write|--json]     Overnight swarm guard plan
++     pp snapshot [notes]              Screenshot + audit archive bundle
++     pp prep                          Preserve agent state and prepare reboot
++ 
++@@ -148,3 +257,7 @@ switch (command) {
++     PP_CWD=/path                     Override working directory
++ `);
++ }
+++})().catch((err: unknown) => {
+++  console.error(err instanceof Error ? err.message : String(err));
+++  process.exitCode = 1;
+++});
++diff --git a/src/core/maintenance.ts b/src/core/maintenance.ts
++new file mode 100644
++index 0000000..fcbc7f5
++--- /dev/null
+++++ b/src/core/maintenance.ts
++@@ -0,0 +1,238 @@
+++import os from 'node:os';
+++import type { AuditResult } from '../types.js';
+++import { runAudit } from './audit.js';
+++import { probeDisk, probeMemory, probeProcesses, probeUptime } from './probes.js';
+++import type { ProcessInfo, ProcessRole } from './probes.js';
+++
+++export type MaintenancePosture = 'green' | 'watch' | 'constrain' | 'maintenance' | 'restart-soon';
+++export type SwarmPosture = 'expand' | 'steady' | 'pause-new-swarms' | 'drain-and-handoff';
+++export type ActionPermission = 'observe' | 'safe-auto' | 'supervisor' | 'confirm' | 'handoff';
+++
+++export interface MaintenanceAction {
+++  id: string;
+++  priority: 'now' | 'next' | 'watch';
+++  permission: ActionPermission;
+++  owner: 'PP' | 'SDS' | 'Starlight Queen' | 'JarvisOps' | 'Human';
+++  command?: string;
+++  reason: string;
+++  expectedImpact: string;
+++  risk: 'low' | 'medium' | 'high';
+++  requiresReceipt: boolean;
+++}
+++
+++export interface MaintenancePlan {
+++  timestamp: string;
+++  hostname: string;
+++  posture: MaintenancePosture;
+++  swarmPosture: SwarmPosture;
+++  summary: string;
+++  metrics: {
+++    score: number;
+++    grade: string;
+++    ramUsedPct: number;
+++    ramFreeMB: number;
+++    diskFreeGB: number;
+++    uptimeHours: number;
+++    totalProcesses: number;
+++    nodeCount: number;
+++    namedAgentCount: number;
+++    aiProcessCount: number;
+++    localModelCount: number;
+++    mcpCount: number;
+++    devServerCount: number;
+++    buildCount: number;
+++    reviewableCount: number;
+++  };
+++  reasons: string[];
+++  actions: MaintenanceAction[];
+++  protectedRoles: Record<string, number>;
+++  reviewableRoles: Record<string, number>;
+++  relatedWorkItems: string[];
+++}
+++
+++function countRoles(processes: ProcessInfo['processes'], protectedOnly: boolean): Record<string, number> {
+++  const counts: Record<string, number> = {};
+++  for (const proc of processes) {
+++    if (proc.protected !== protectedOnly) continue;
+++    counts[proc.role] = (counts[proc.role] ?? 0) + 1;
+++  }
+++  return counts;
+++}
+++
+++function roleCount(procs: ProcessInfo, role: ProcessRole): number {
+++  return procs.processes.filter(proc => proc.role === role).length;
+++}
+++
+++function choosePosture(plan: Pick<MaintenancePlan, 'metrics' | 'reasons'>): MaintenancePosture {
+++  const m = plan.metrics;
+++  if (m.ramUsedPct >= 94 || m.ramFreeMB < 2_000 || (m.uptimeHours > 168 && m.ramUsedPct >= 82)) return 'restart-soon';
+++  if (m.diskFreeGB < 20 || m.ramUsedPct >= 88 || m.totalProcesses > 850 || m.nodeCount > 140) return 'maintenance';
+++  if (m.ramUsedPct >= 82 || m.totalProcesses > 700 || m.nodeCount > 90 || m.namedAgentCount > 25) return 'constrain';
+++  if (m.ramUsedPct >= 72 || m.uptimeHours > 72 || m.nodeCount > 60 || m.namedAgentCount > 12) return 'watch';
+++  return 'green';
+++}
+++
+++function swarmPostureFor(posture: MaintenancePosture): SwarmPosture {
+++  switch (posture) {
+++    case 'green': return 'expand';
+++    case 'watch': return 'steady';
+++    case 'constrain': return 'pause-new-swarms';
+++    case 'maintenance':
+++    case 'restart-soon':
+++      return 'drain-and-handoff';
+++  }
+++}
+++
+++function addAction(actions: MaintenanceAction[], action: MaintenanceAction): void {
+++  if (!actions.some(existing => existing.id === action.id)) actions.push(action);
+++}
+++
+++export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
+++  const audit: AuditResult = runAudit({ cwd });
+++  const mem = probeMemory();
+++  const disk = probeDisk(cwd);
+++  const uptime = probeUptime();
+++  const procs = probeProcesses();
+++  const namedAgentCount = procs.claudeCount + procs.cursorCount + procs.codexCount;
+++  const aiProcessCount = roleCount(procs, 'ai-agent');
+++  const localModelCount = roleCount(procs, 'local-model');
+++  const mcpCount = roleCount(procs, 'mcp');
+++  const devServerCount = roleCount(procs, 'dev-server');
+++  const buildCount = roleCount(procs, 'build');
+++  const reviewableCount = procs.processes.filter(proc => !proc.protected).length;
+++
+++  const reasons: string[] = [];
+++  if (mem.usedPct >= 88) reasons.push(`RAM is high at ${mem.usedPct}% used (${mem.freeMB}MB free).`);
+++  else if (mem.usedPct >= 82) reasons.push(`RAM is elevated at ${mem.usedPct}% used; avoid launching large swarms until pressure drops.`);
+++  else reasons.push(`RAM is workable at ${mem.usedPct}% used (${mem.freeMB}MB free).`);
+++
+++  if (disk.freeGB < 20) reasons.push(`Disk is critical at ${disk.freeGB}GB free.`);
+++  else reasons.push(`Disk has ${disk.freeGB}GB free.`);
+++
+++  if (uptime.uptimeHours > 168) reasons.push(`Uptime is ${uptime.uptimeHours}h; schedule a restart after handoff.`);
+++  else if (uptime.uptimeHours > 72) reasons.push(`Uptime is ${uptime.uptimeHours}h; watch for stale agent/process state.`);
+++
+++  if (namedAgentCount > 25) reasons.push(`${namedAgentCount} named AI-agent processes are active; new swarms should be gated.`);
+++  if (procs.nodeCount > 90) reasons.push(`${procs.nodeCount} node processes are active; inspect for orphaned build/dev/MCP processes.`);
+++  if (localModelCount > 0) reasons.push(`${localModelCount} local model processes are protected; ask before stopping local LLM work.`);
+++  if (devServerCount > 0) reasons.push(`${devServerCount} dev-server processes should be managed through SDS.`);
+++  if (buildCount > 0) reasons.push(`${buildCount} build/generator processes are reviewable and require receipts before termination.`);
+++
+++  const metrics = {
+++    score: audit.totalScore,
+++    grade: audit.grade,
+++    ramUsedPct: mem.usedPct,
+++    ramFreeMB: mem.freeMB,
+++    diskFreeGB: disk.freeGB,
+++    uptimeHours: uptime.uptimeHours,
+++    totalProcesses: procs.totalProcesses,
+++    nodeCount: procs.nodeCount,
+++    namedAgentCount,
+++    aiProcessCount,
+++    localModelCount,
+++    mcpCount,
+++    devServerCount,
+++    buildCount,
+++    reviewableCount,
+++  };
+++
+++  const posture = choosePosture({ metrics, reasons });
+++  const swarmPosture = swarmPostureFor(posture);
+++  const actions: MaintenanceAction[] = [];
+++
+++  addAction(actions, {
+++    id: 'pp-inspect-full-map',
+++    priority: posture === 'green' ? 'watch' : 'now',
+++    permission: 'observe',
+++    owner: 'PP',
+++    command: 'pp inspect --all --json',
+++    reason: 'Keep a full redacted process map before making cleanup decisions.',
+++    expectedImpact: 'Preserves reasoning chain and reduces accidental process disruption.',
+++    risk: 'low',
+++    requiresReceipt: false,
+++  });
+++
+++  if (mem.usedPct >= 82 || procs.nodeCount > 90 || namedAgentCount > 25) {
+++    addAction(actions, {
+++      id: 'pause-new-swarms',
+++      priority: 'now',
+++      permission: 'handoff',
+++      owner: 'Starlight Queen',
+++      reason: 'Machine pressure is high enough that new parallel agents could crowd RAM and confuse ownership.',
+++      expectedImpact: 'Prevents runaway agent/process growth while current work drains.',
+++      risk: 'low',
+++      requiresReceipt: false,
+++    });
+++  }
+++
+++  if (devServerCount > 0 || procs.nodeCount > 70) {
+++    addAction(actions, {
+++      id: 'sds-reap-dev-servers',
+++      priority: procs.nodeCount > 90 ? 'now' : 'next',
+++      permission: 'supervisor',
+++      owner: 'SDS',
+++      command: 'sds status -IncludeUnmanaged; sds reap',
+++      reason: 'Local dev servers should be stopped through the supervisor so review URLs, TTL, owner, and ports stay coherent.',
+++      expectedImpact: 'Reduces duplicate localhost servers without breaking active review loops.',
+++      risk: 'low',
+++      requiresReceipt: false,
+++    });
+++  }
+++
+++  if (buildCount > 0 || reviewableCount > 200) {
+++    addAction(actions, {
+++      id: 'review-reducible-processes',
+++      priority: posture === 'maintenance' || posture === 'restart-soon' ? 'now' : 'next',
+++      permission: 'confirm',
+++      owner: 'Human',
+++      reason: 'Reviewable build/node/shell processes may be safe to reduce, but only after their purpose and recovery command are documented.',
+++      expectedImpact: 'Can free RAM while protecting active agents, model workers, and user work.',
+++      risk: 'medium',
+++      requiresReceipt: true,
+++    });
+++  }
+++
+++  if (mem.usedPct >= 88 || posture === 'restart-soon') {
+++    addAction(actions, {
+++      id: 'handoff-before-restart',
+++      priority: posture === 'restart-soon' ? 'now' : 'next',
+++      permission: 'handoff',
+++      owner: 'Starlight Queen',
+++      command: 'pp prep',
+++      reason: 'High RAM pressure or stale uptime means restart may be the cleanest recovery, but agent state must be preserved first.',
+++      expectedImpact: 'Reduces crash risk and preserves current work before restart.',
+++      risk: 'medium',
+++      requiresReceipt: false,
+++    });
+++  }
+++
+++  if (disk.freeGB < 50) {
+++    addAction(actions, {
+++      id: 'safe-cache-cleanup',
+++      priority: disk.freeGB < 20 ? 'now' : 'next',
+++      permission: 'safe-auto',
+++      owner: 'PP',
+++      command: 'pp fix',
+++      reason: 'Disk free space is low enough that safe cache cleanup may prevent build failures.',
+++      expectedImpact: 'Frees cache/temp space without touching project files.',
+++      risk: 'low',
+++      requiresReceipt: false,
+++    });
+++  }
+++
+++  const summary = `${posture} maintenance posture; ${swarmPosture} swarm posture; score ${audit.totalScore}/${audit.grade}.`;
+++
+++  return {
+++    timestamp: new Date().toISOString(),
+++    hostname: os.hostname(),
+++    posture,
+++    swarmPosture,
+++    summary,
+++    metrics,
+++    reasons,
+++    actions,
+++    protectedRoles: countRoles(procs.processes, true),
+++    reviewableRoles: countRoles(procs.processes, false),
+++    relatedWorkItems: ['ops-jarvisops-desktop-control-plane', 'ops-agent-run-ledger-calendar'],
+++  };
+++}
++diff --git a/src/core/overnight.ts b/src/core/overnight.ts
++new file mode 100644
++index 0000000..af94c73
++--- /dev/null
+++++ b/src/core/overnight.ts
++@@ -0,0 +1,302 @@
+++import { mkdirSync, writeFileSync } from 'node:fs';
+++import { join } from 'node:path';
+++import os from 'node:os';
+++import { buildMaintenancePlan, type MaintenancePlan } from './maintenance.js';
+++import { probeProcesses, type ProcessConsumer } from './probes.js';
+++import { defaultProcessLedgerPath, defaultProcessWatchSummaryPath } from './process-ledger.js';
+++
+++export type OvernightDirectiveLevel = 'expand' | 'steady' | 'hold' | 'drain';
+++
+++export interface OvernightProcessRow {
+++  pid: number;
+++  parentPid: number;
+++  name: string;
+++  memMB: number;
+++  role: string;
+++  protected: boolean;
+++  reasoning: string;
+++  actionHint: string;
+++  command: string;
+++}
+++
+++export interface OvernightGuardPlan {
+++  timestamp: string;
+++  hostname: string;
+++  mode: 'overnight-swarm-guard';
+++  directive: {
+++    level: OvernightDirectiveLevel;
+++    allowNewSwarms: boolean;
+++    summary: string;
+++    queenInstructions: string[];
+++    agentInstructions: string[];
+++  };
+++  maintenance: MaintenancePlan;
+++  processSnapshot: {
+++    totalProcesses: number;
+++    protectedCount: number;
+++    reviewableCount: number;
+++    nodeCount: number;
+++    topReviewable: OvernightProcessRow[];
+++    topProtectedAgents: OvernightProcessRow[];
+++  };
+++  watch: {
+++    command: string;
+++    seconds: number;
+++    intervalSeconds: number;
+++    logPath: string;
+++    summaryPath: string;
+++  };
+++  sds: {
+++    statusCommand: string;
+++    reapCommand: string;
+++    guidance: string;
+++  };
+++  commandCenter: {
+++    workItems: string[];
+++    evidencePaths: string[];
+++  };
+++  noTouch: string[];
+++  reviewBeforeStop: string[];
+++  nextChecks: string[];
+++}
+++
+++export interface OvernightGuardWriteResult {
+++  dir: string;
+++  jsonFile: string;
+++  markdownFile: string;
+++}
+++
+++function rowFor(proc: ProcessConsumer): OvernightProcessRow {
+++  return {
+++    pid: proc.pid,
+++    parentPid: proc.parentPid,
+++    name: proc.name,
+++    memMB: proc.memMB,
+++    role: proc.role,
+++    protected: proc.protected,
+++    reasoning: proc.reasoning,
+++    actionHint: proc.actionHint,
+++    command: proc.command,
+++  };
+++}
+++
+++function chooseDirective(plan: MaintenancePlan): OvernightGuardPlan['directive'] {
+++  if (plan.swarmPosture === 'drain-and-handoff') {
+++    return {
+++      level: 'drain',
+++      allowNewSwarms: false,
+++      summary: 'Let current swarms finish, request handoffs, and avoid launching new parallel work overnight.',
+++      queenInstructions: [
+++        'Stop adding workers unless Frank explicitly approves a new bounded task.',
+++        'Ask active agents to preserve handoff state before any cleanup or restart decision.',
+++        'Route dev-server cleanup through SDS and ambiguous process reduction through human confirmation.',
+++      ],
+++      agentInstructions: [
+++        'Finish the current task or write a handoff before starting another.',
+++        'Do not start new localhost servers unless the active task truly requires it.',
+++        'Do not stop AI agents, local models, MCP servers, editors, or unknown user processes.',
+++      ],
+++    };
+++  }
+++
+++  if (plan.swarmPosture === 'pause-new-swarms') {
+++    return {
+++      level: 'hold',
+++      allowNewSwarms: false,
+++      summary: 'Hold new swarms; allow only current bounded work and cleanup proposals.',
+++      queenInstructions: [
+++        'Keep the queue in pause-new-swarms mode.',
+++        'Prefer one active agent per repo and require evidence paths for any follow-up.',
+++        'Use PP inspect and SDS status before proposing reductions.',
+++      ],
+++      agentInstructions: [
+++        'Avoid speculative broad scans or extra model-heavy work.',
+++        'Record receipts for processes, ports, and generated artifacts.',
+++        'Use cloud previews for review handoff instead of leaving localhost running.',
+++      ],
+++    };
+++  }
+++
+++  if (plan.swarmPosture === 'steady') {
+++    return {
+++      level: 'steady',
+++      allowNewSwarms: true,
+++      summary: 'Proceed with bounded high-value work; avoid casual expansion.',
+++      queenInstructions: [
+++        'Allow only clearly scoped queued work with time limits.',
+++        'Prefer workflow or router patterns before full swarms.',
+++        'Recheck PP maintain before adding local models or visual QA loops.',
+++      ],
+++      agentInstructions: [
+++        'Keep changes scoped and run local fast gates before cloud work.',
+++        'Do not leave dev servers running after the loop.',
+++        'Write evidence paths and next actions before handoff.',
+++      ],
+++    };
+++  }
+++
+++  return {
+++    level: 'expand',
+++    allowNewSwarms: true,
+++    summary: 'Machine posture is healthy enough for bounded parallel work.',
+++    queenInstructions: [
+++      'Prefer small swarms with one lead plus two to four specialists.',
+++      'Set a stopping condition and evidence path before dispatch.',
+++      'Recheck PP maintain before long local model or build work.',
+++    ],
+++    agentInstructions: [
+++      'Use the smallest sufficient orchestration pattern.',
+++      'Keep server lifecycle under SDS.',
+++      'Preserve receipts for tools, processes, ports, and artifacts.',
+++    ],
+++  };
+++}
+++
+++export function buildOvernightGuardPlan(cwd = process.cwd()): OvernightGuardPlan {
+++  const maintenance = buildMaintenancePlan(cwd);
+++  const processes = probeProcesses();
+++  const reviewable = processes.processes
+++    .filter(proc => !proc.protected)
+++    .sort((a, b) => b.memMB - a.memMB)
+++    .slice(0, 12)
+++    .map(rowFor);
+++
+++  const protectedAgents = processes.processes
+++    .filter(proc => proc.protected && ['ai-agent', 'local-model', 'mcp', 'dev-server', 'editor'].includes(proc.role))
+++    .sort((a, b) => b.memMB - a.memMB)
+++    .slice(0, 12)
+++    .map(rowFor);
+++
+++  return {
+++    timestamp: new Date().toISOString(),
+++    hostname: os.hostname(),
+++    mode: 'overnight-swarm-guard',
+++    directive: chooseDirective(maintenance),
+++    maintenance,
+++    processSnapshot: {
+++      totalProcesses: processes.totalProcesses,
+++      protectedCount: processes.protectedCount,
+++      reviewableCount: processes.processes.filter(proc => !proc.protected).length,
+++      nodeCount: processes.nodeCount,
+++      topReviewable: reviewable,
+++      topProtectedAgents: protectedAgents,
+++    },
+++    watch: {
+++      command: 'pp watch --seconds 300 --interval 5',
+++      seconds: 300,
+++      intervalSeconds: 5,
+++      logPath: defaultProcessLedgerPath(),
+++      summaryPath: defaultProcessWatchSummaryPath(),
+++    },
+++    sds: {
+++      statusCommand: 'sds status -IncludeUnmanaged',
+++      reapCommand: 'sds reap',
+++      guidance: 'Use SDS for local dev-server lifecycle. Reap only when the server is stale, unmanaged, or no longer needed by an active review loop.',
+++    },
+++    commandCenter: {
+++      workItems: maintenance.relatedWorkItems,
+++      evidencePaths: [
+++        'C:/Users/frank/starlight/repos/starlight-agent-config/core/tasks/global-progress-ledger.json',
+++        'C:/Users/frank/starlight/repos/starlight-agent-config/core/policies/starlight-agent-orchestration-best-practices-2026-07-04.md',
+++        'C:/Users/frank/starlight/repos/peak-performance/docs/starlight-process-oversight.md',
+++        'C:/Users/frank/starlight/repos/peak-performance/docs/starlight-agent-action-policy.md',
+++        defaultProcessLedgerPath(),
+++        defaultProcessWatchSummaryPath(),
+++      ],
+++    },
+++    noTouch: [
+++      'Claude, Codex, Antigravity, Cursor, and active coding-agent workspaces.',
+++      'Local model runtimes, including LM Studio, llmster, Ollama, and model-serving workers.',
+++      'MCP/tooling servers, Hermes gateway, Starlight bridges, editors, and Windows system processes.',
+++      'Supervised or unmanaged dev servers without SDS status and owner review.',
+++    ],
+++    reviewBeforeStop: [
+++      'Build/generation jobs.',
+++      'Generic node processes.',
+++      'Shell processes with child jobs.',
+++      'Browsers and WebViews.',
+++      'Unknown processes without a repo, owner, purpose, and recovery command.',
+++    ],
+++    nextChecks: [
+++      'Run pp maintain before adding any new overnight swarm.',
+++      'Run pp inspect --all --json before any cleanup proposal.',
+++      'Run sds status -IncludeUnmanaged before starting or stopping web servers.',
+++      'Use pp prep before restart, sleep, or aggressive cleanup.',
+++    ],
+++  };
+++}
+++
+++export function defaultOvernightGuardDir(): string {
+++  return join(os.homedir(), '.starlight', 'overnight-guard');
+++}
+++
+++function stampFor(timestamp: string): string {
+++  return timestamp.replace(/[:.]/g, '-');
+++}
+++
+++export function formatOvernightGuardMarkdown(plan: OvernightGuardPlan): string {
+++  const lines: string[] = [];
+++  lines.push(`# Peak Performance Overnight Guard - ${plan.timestamp}`);
+++  lines.push('');
+++  lines.push(`Host: ${plan.hostname}`);
+++  lines.push(`Directive: ${plan.directive.level}`);
+++  lines.push(`Allow new swarms: ${plan.directive.allowNewSwarms ? 'yes' : 'no'}`);
+++  lines.push(`Summary: ${plan.directive.summary}`);
+++  lines.push('');
+++  lines.push('## Maintenance');
+++  lines.push('');
+++  lines.push(`- ${plan.maintenance.summary}`);
+++  lines.push(`- RAM: ${plan.maintenance.metrics.ramUsedPct}% used (${plan.maintenance.metrics.ramFreeMB}MB free)`);
+++  lines.push(`- Disk: ${plan.maintenance.metrics.diskFreeGB}GB free`);
+++  lines.push(`- Processes: ${plan.maintenance.metrics.totalProcesses} total, ${plan.maintenance.metrics.nodeCount} node, ${plan.maintenance.metrics.namedAgentCount} named agents, ${plan.maintenance.metrics.reviewableCount} reviewable`);
+++  lines.push('');
+++  lines.push('## Queen Instructions');
+++  lines.push('');
+++  for (const item of plan.directive.queenInstructions) lines.push(`- ${item}`);
+++  lines.push('');
+++  lines.push('## Agent Instructions');
+++  lines.push('');
+++  for (const item of plan.directive.agentInstructions) lines.push(`- ${item}`);
+++  lines.push('');
+++  lines.push('## Watch And SDS');
+++  lines.push('');
+++  lines.push(`- Watch: \`${plan.watch.command}\``);
+++  lines.push(`- Watch log: \`${plan.watch.logPath}\``);
+++  lines.push(`- Watch summary: \`${plan.watch.summaryPath}\``);
+++  lines.push(`- SDS status: \`${plan.sds.statusCommand}\``);
+++  lines.push(`- SDS guidance: ${plan.sds.guidance}`);
+++  lines.push('');
+++  lines.push('## Top Reviewable Processes');
+++  lines.push('');
+++  lines.push('| PID | MB | Role | Name | Action |');
+++  lines.push('|---:|---:|---|---|---|');
+++  for (const proc of plan.processSnapshot.topReviewable) {
+++    lines.push(`| ${proc.pid} | ${proc.memMB} | ${proc.role} | ${proc.name} | ${proc.actionHint.replace(/\|/g, '/')} |`);
+++  }
+++  lines.push('');
+++  lines.push('## No Touch Without Coordination');
+++  lines.push('');
+++  for (const item of plan.noTouch) lines.push(`- ${item}`);
+++  lines.push('');
+++  lines.push('## Review Before Stop');
+++  lines.push('');
+++  for (const item of plan.reviewBeforeStop) lines.push(`- ${item}`);
+++  lines.push('');
+++  lines.push('## Evidence Paths');
+++  lines.push('');
+++  for (const path of plan.commandCenter.evidencePaths) lines.push(`- \`${path}\``);
+++  lines.push('');
+++  return lines.join('\n');
+++}
+++
+++export function writeOvernightGuardPlan(plan: OvernightGuardPlan, dir = defaultOvernightGuardDir()): OvernightGuardWriteResult {
+++  mkdirSync(dir, { recursive: true });
+++  const stamp = stampFor(plan.timestamp);
+++  const jsonFile = join(dir, `overnight-guard-${stamp}.json`);
+++  const markdownFile = join(dir, `overnight-guard-${stamp}.md`);
+++  writeFileSync(jsonFile, JSON.stringify(plan, null, 2), 'utf8');
+++  writeFileSync(markdownFile, formatOvernightGuardMarkdown(plan), 'utf8');
+++  writeFileSync(join(dir, 'latest.json'), JSON.stringify(plan, null, 2), 'utf8');
+++  writeFileSync(join(dir, 'latest.md'), formatOvernightGuardMarkdown(plan), 'utf8');
+++  return { dir, jsonFile, markdownFile };
+++}
++diff --git a/src/core/probes.ts b/src/core/probes.ts
++index 8e6931c..b15ed3d 100644
++--- a/src/core/probes.ts
+++++ b/src/core/probes.ts
++@@ -23,6 +23,7 @@ function runFile(cmd: string, args: string[], timeout = 10_000): string {
++     return execFileSync(cmd, args, {
++       encoding: 'utf-8',
++       timeout,
+++      maxBuffer: 32 * 1024 * 1024,
++       stdio: ['pipe', 'pipe', 'pipe'],
++       windowsHide: true,
++     }).trim();
++@@ -193,7 +194,35 @@ export interface ProcessInfo {
++   codexCount: number;
++   vscodeCount: number;
++   edgeChromeTabs: number;
++-  topConsumers: { name: string; memMB: number }[];
+++  protectedCount: number;
+++  processes: ProcessConsumer[];
+++  topConsumers: ProcessConsumer[];
+++}
+++
+++export type ProcessRole =
+++  | 'ai-agent'
+++  | 'local-model'
+++  | 'node'
+++  | 'mcp'
+++  | 'dev-server'
+++  | 'build'
+++  | 'browser'
+++  | 'editor'
+++  | 'shell'
+++  | 'system'
+++  | 'other';
+++
+++export interface ProcessConsumer {
+++  pid: number;
+++  parentPid: number;
+++  name: string;
+++  memMB: number;
+++  role: ProcessRole;
+++  protected: boolean;
+++  protectionReason?: string;
+++  reasoning: string;
+++  actionHint: string;
+++  command: string;
++ }
++ 
++ /** Exact process name matching to avoid false positives */
++@@ -206,6 +235,228 @@ const PROCESS_MATCHERS: Record<string, (name: string) => boolean> = {
++   browser: (n) => n === 'msedge.exe' || n === 'chrome.exe' || n === 'msedge' || n === 'chrome',
++ };
++ 
+++const WINDOWS_PROTECTED_NAMES = new Set([
+++  'audiodg.exe',
+++  'conhost.exe',
+++  'csrss.exe',
+++  'ctfmon.exe',
+++  'dwm.exe',
+++  'explorer.exe',
+++  'fontdrvhost.exe',
+++  'lsass.exe',
+++  'memory compression',
+++  'msmpeng.exe',
+++  'registry',
+++  'runtimebroker.exe',
+++  'searchhost.exe',
+++  'securityhealthservice.exe',
+++  'securityhealthsystray.exe',
+++  'services.exe',
+++  'shellexperiencehost.exe',
+++  'shellhost.exe',
+++  'sihost.exe',
+++  'smss.exe',
+++  'spoolsv.exe',
+++  'startmenuexperiencehost.exe',
+++  'svchost.exe',
+++  'system',
+++  'system idle process',
+++  'taskhostw.exe',
+++  'textinputhost.exe',
+++  'wininit.exe',
+++  'winlogon.exe',
+++  'wlanext.exe',
+++  'wudfhost.exe',
+++]);
+++
+++interface WinProcessRow {
+++  ProcessId?: number | string;
+++  ParentProcessId?: number | string;
+++  Name?: string;
+++  CommandLine?: string | null;
+++  WorkingSetSize?: number | string | null;
+++}
+++
+++function parseJsonArray<T>(raw: string): T[] {
+++  if (!raw) return [];
+++  try {
+++    const parsed = JSON.parse(raw) as T | T[];
+++    return Array.isArray(parsed) ? parsed : [parsed];
+++  } catch {
+++    return [];
+++  }
+++}
+++
+++function redactCommandLine(command: string): string {
+++  return command
+++    .replace(/(["']?(?:api[_-]?key|token|secret|password|passwd|pwd|authorization)["']?\s*:\s*["'])[^"']+/gi, '$1[REDACTED]')
+++    .replace(/(api[_-]?key|token|secret|password|passwd|pwd|authorization)(=|\s+)[^\s"']+/gi, '$1$2[REDACTED]')
+++    .replace(/(--(?:api-key|token|secret|password|authorization)\s+)[^\s"']+/gi, '$1[REDACTED]')
+++    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]');
+++}
+++
+++function classifyProcess(name: string, command: string): Pick<ProcessConsumer, 'role' | 'protected' | 'protectionReason'> {
+++  const n = name.toLowerCase();
+++  const cmd = command.toLowerCase();
+++  const looksLikeMcpServer =
+++    cmd.includes('modelcontextprotocol') ||
+++    /(^|[\s"'\\/])(mcp|mcp-server|mcpserver)([\s"'\\/]|$)/.test(cmd) ||
+++    /(^|[\s"'\\/])(serve|server)\s+mcp([\s"']|$)/.test(cmd) ||
+++    /(^|[\s"'])(--mcp|-mcp)([\s"']|$)/.test(cmd) ||
+++    cmd.includes('agentic-ops/server.js --mcp') ||
+++    cmd.includes('agentic-ops\\server.js --mcp') ||
+++    cmd.includes('railway.js" mcp') ||
+++    cmd.includes("railway.js' mcp") ||
+++    cmd.includes('railway.exe mcp') ||
+++    cmd.includes('headroom mcp serve');
+++
+++  if (n.includes('antigravity') || cmd.includes('antigravity')) {
+++    return { role: 'ai-agent', protected: true, protectionReason: 'active coding-agent workspace' };
+++  }
+++  if (PROCESS_MATCHERS.claude(n) || PROCESS_MATCHERS.codex(n) || PROCESS_MATCHERS.cursor(n)) {
+++    return { role: 'ai-agent', protected: true, protectionReason: 'active AI agent session' };
+++  }
+++  if (n.includes('lmstudio') || n.includes('llmster') || cmd.includes('.lmstudio') || n === 'ollama.exe' || n === 'ollama') {
+++    return { role: 'local-model', protected: true, protectionReason: 'local model runtime' };
+++  }
+++  if (PROCESS_MATCHERS.vscode(n)) {
+++    return { role: 'editor', protected: true, protectionReason: 'editor workspace' };
+++  }
+++  if (PROCESS_MATCHERS.browser(n)) {
+++    return { role: 'browser', protected: false };
+++  }
+++  if (cmd.includes('hermes_cli.main gateway run') || cmd.includes('hermes-cli') || cmd.includes('hermes gateway')) {
+++    return { role: 'mcp', protected: true, protectionReason: 'Hermes/Starlight orchestration gateway' };
+++  }
+++  if (looksLikeMcpServer) {
+++    return { role: 'mcp', protected: true, protectionReason: 'agent/tooling server' };
+++  }
+++  if (
+++    /\b(next|vite|astro|remix)\s+(build|export)\b/.test(cmd) ||
+++    /[\\/]next[\\/]dist[\\/]bin[\\/]next["']?\s+build\b/.test(cmd) ||
+++    /[\\/]\.next[\\/]build[\\/]/.test(cmd) ||
+++    /\bnpm(?:\.cmd)?\s+run\s+(gen|build|prebuild|export|compile|render)\b/.test(cmd) ||
+++    cmd.includes('generate_')
+++  ) {
+++    return { role: 'build', protected: false };
+++  }
+++  if (
+++    /\b(next|vite|astro|remix)\s+(dev|start|preview)\b/.test(cmd) ||
+++    /[\\/]next[\\/]dist[\\/]bin[\\/]next["']?\s+(dev|start)/.test(cmd) ||
+++    /[\\/]next[\\/]dist[\\/]server[\\/]lib[\\/]start-server\.js\b/.test(cmd) ||
+++    /[\\/]node_modules[\\/]\.bin[\\/].*(next|vite|astro|remix)(?:["']?\s+(dev|start|preview)\b)?/.test(cmd) ||
+++    /\bnpm(?:\.cmd)?\s+run\s+(dev|start|preview)\b/.test(cmd) ||
+++    /\b(pnpm|yarn|bun)(?:\.cmd)?(?:\s+--dir\s+\S+)?\s+(dev|start|preview)\b/.test(cmd) ||
+++    cmd.includes('tsx watch')
+++  ) {
+++    return { role: 'dev-server', protected: true, protectionReason: 'dev server; stop through project supervisor' };
+++  }
+++  if (cmd.includes('next build')) {
+++    return { role: 'build', protected: false };
+++  }
+++  if (PROCESS_MATCHERS.node(n)) {
+++    return { role: 'node', protected: false };
+++  }
+++  if (n === 'bash.exe' || n === 'bash' || n === 'powershell.exe' || n === 'pwsh.exe' || n === 'cmd.exe') {
+++    return { role: 'shell', protected: false };
+++  }
+++  if (WINDOWS_PROTECTED_NAMES.has(n) || n.includes('system')) {
+++    return { role: 'system', protected: true, protectionReason: 'operating system process' };
+++  }
+++  return { role: 'other', protected: false };
+++}
+++
+++function processReasoning(classification: Pick<ProcessConsumer, 'role' | 'protected' | 'protectionReason'>): string {
+++  if (classification.protected) {
+++    return `Protected ${classification.role}: ${classification.protectionReason ?? 'requires coordination before action'}.`;
+++  }
+++
+++  switch (classification.role) {
+++    case 'build':
+++      return 'Reviewable build/generation job: usually resumable, but capture repo, command, and recovery path before stopping.';
+++    case 'node':
+++      return 'Reviewable node process: inspect parent command and repo before deciding whether it is an orphan.';
+++    case 'browser':
+++      return 'Reviewable user-facing browser process: prefer manual close unless clearly abandoned.';
+++    case 'shell':
+++      return 'Reviewable shell process: may own a child job; inspect the process tree before action.';
+++    default:
+++      return 'Reviewable unknown process: inspect purpose and owner before action.';
+++  }
+++}
+++
+++function processActionHint(classification: Pick<ProcessConsumer, 'role' | 'protected'>): string {
+++  if (classification.protected) return 'Do not terminate without explicit coordination or a supervisor-specific stop path.';
+++
+++  switch (classification.role) {
+++    case 'build':
+++      return 'Can be reduced only after recording a receipt and confirming regeneration/resume command.';
+++    case 'node':
+++      return 'Candidate for reduction only if orphaned, duplicate, idle, or owned by a stopped task.';
+++    case 'browser':
+++      return 'Reduce by closing tabs/windows manually when user confirms.';
+++    case 'shell':
+++      return 'Reduce by stopping the child job or closing the owning terminal after confirmation.';
+++    default:
+++      return 'No automatic action; classify purpose first.';
+++  }
+++}
+++
+++function addProcessCounts(info: ProcessInfo, name: string): void {
+++  const n = name.toLowerCase();
+++  if (PROCESS_MATCHERS.node(n)) info.nodeCount++;
+++  if (PROCESS_MATCHERS.claude(n)) info.claudeCount++;
+++  if (PROCESS_MATCHERS.cursor(n)) info.cursorCount++;
+++  if (PROCESS_MATCHERS.codex(n)) info.codexCount++;
+++  if (PROCESS_MATCHERS.vscode(n)) info.vscodeCount++;
+++  if (PROCESS_MATCHERS.browser(n)) info.edgeChromeTabs++;
+++}
+++
+++function probeWindowsProcesses(info: ProcessInfo): boolean {
+++  const ps = [
+++    '$ErrorActionPreference = "SilentlyContinue";',
+++    'Get-CimInstance Win32_Process |',
+++    'Select-Object ProcessId,ParentProcessId,Name,CommandLine,WorkingSetSize |',
+++    'ConvertTo-Json -Compress -Depth 2',
+++  ].join(' ');
+++  const rows = parseJsonArray<WinProcessRow>(runPS(ps, 15_000));
+++  if (rows.length === 0) return false;
+++
+++  info.totalProcesses = rows.length;
+++
+++  const consumers: ProcessConsumer[] = [];
+++  for (const row of rows) {
+++    const name = String(row.Name ?? '').trim();
+++    if (!name) continue;
+++
+++    addProcessCounts(info, name);
+++
+++    const command = redactCommandLine(String(row.CommandLine ?? name));
+++    const memMB = Math.round((Number(row.WorkingSetSize ?? 0) / 1024 / 1024) * 10) / 10;
+++    const classification = classifyProcess(name, command);
+++    if (classification.protected) info.protectedCount++;
+++
+++    const reasoning = processReasoning(classification);
+++    const actionHint = processActionHint(classification);
+++
+++    consumers.push({
+++      pid: safeInt(String(row.ProcessId ?? 0)),
+++      parentPid: safeInt(String(row.ParentProcessId ?? 0)),
+++      name,
+++      memMB,
+++      command,
+++      reasoning,
+++      actionHint,
+++      ...classification,
+++    });
+++  }
+++
+++  info.processes = consumers.sort((a, b) => b.memMB - a.memMB);
+++  info.topConsumers = info.processes.slice(0, 20);
+++
+++  return true;
+++}
+++
++ export function probeProcesses(): ProcessInfo {
++   const info: ProcessInfo = {
++     totalProcesses: 0,
++@@ -215,10 +466,14 @@ export function probeProcesses(): ProcessInfo {
++     codexCount: 0,
++     vscodeCount: 0,
++     edgeChromeTabs: 0,
+++    protectedCount: 0,
+++    processes: [],
++     topConsumers: [],
++   };
++ 
++   if (os.platform() === 'win32') {
+++    if (probeWindowsProcesses(info)) return info;
+++
++     const tasklist = runFile('tasklist', ['/fo', 'csv', '/nh']);
++     const lines = tasklist.split('\n').filter(l => l.trim());
++     info.totalProcesses = lines.length;
++@@ -226,30 +481,37 @@ export function probeProcesses(): ProcessInfo {
++     for (const line of lines) {
++       const match = line.match(/"([^"]+)"/);
++       if (!match) continue;
++-      const name = match[1].toLowerCase();
++-      if (PROCESS_MATCHERS.node(name)) info.nodeCount++;
++-      if (PROCESS_MATCHERS.claude(name)) info.claudeCount++;
++-      if (PROCESS_MATCHERS.cursor(name)) info.cursorCount++;
++-      if (PROCESS_MATCHERS.codex(name)) info.codexCount++;
++-      if (PROCESS_MATCHERS.vscode(name)) info.vscodeCount++;
++-      if (PROCESS_MATCHERS.browser(name)) info.edgeChromeTabs++;
+++      addProcessCounts(info, match[1]);
++     }
++   } else {
++-    const ps = runFile('ps', ['aux', '--no-headers']);
+++    const ps = runFile('ps', ['-eo', 'pid=,ppid=,rss=,comm=,args=']);
++     const lines = ps.split('\n').filter(l => l.trim());
++     info.totalProcesses = lines.length;
++ 
++     for (const line of lines) {
++-      // Extract the command name (last column, basename only)
++-      const parts = line.trim().split(/\s+/);
++-      const cmd = (parts[10] ?? '').split('/').pop()?.toLowerCase() ?? '';
++-      if (PROCESS_MATCHERS.node(cmd)) info.nodeCount++;
++-      if (PROCESS_MATCHERS.claude(cmd)) info.claudeCount++;
++-      if (PROCESS_MATCHERS.cursor(cmd)) info.cursorCount++;
++-      if (PROCESS_MATCHERS.codex(cmd)) info.codexCount++;
++-      if (PROCESS_MATCHERS.vscode(cmd)) info.vscodeCount++;
++-      if (PROCESS_MATCHERS.browser(cmd)) info.edgeChromeTabs++;
+++      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/);
+++      if (!match) continue;
+++      const [, pid, ppid, rssKB, comm, args] = match;
+++      const name = comm.split('/').pop() ?? comm;
+++      const command = redactCommandLine(args || comm);
+++      addProcessCounts(info, name);
+++      const classification = classifyProcess(name, command);
+++      if (classification.protected) info.protectedCount++;
+++      info.processes.push({
+++        pid: safeInt(pid),
+++        parentPid: safeInt(ppid),
+++        name,
+++        memMB: Math.round((safeInt(rssKB) / 1024) * 10) / 10,
+++        command,
+++        reasoning: processReasoning(classification),
+++        actionHint: processActionHint(classification),
+++        ...classification,
+++      });
++     }
+++
+++    info.processes = info.processes
+++      .sort((a, b) => b.memMB - a.memMB);
+++    info.topConsumers = info.processes.slice(0, 20);
++   }
++ 
++   return info;
++diff --git a/src/core/process-ledger.ts b/src/core/process-ledger.ts
++new file mode 100644
++index 0000000..50347a5
++--- /dev/null
+++++ b/src/core/process-ledger.ts
++@@ -0,0 +1,152 @@
+++import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+++import { dirname, join } from 'node:path';
+++import os from 'node:os';
+++import { setTimeout as sleep } from 'node:timers/promises';
+++import { probeProcesses, type ProcessConsumer } from './probes.js';
+++
+++export type ProcessLedgerEventType = 'start' | 'stop';
+++
+++export interface ProcessLedgerEvent {
+++  timestamp: string;
+++  type: ProcessLedgerEventType;
+++  source: 'peak-performance';
+++  orchestration: {
+++    layer: 'SO';
+++    queen: 'starlight-process-oversight-queen';
+++    workItems: string[];
+++  };
+++  process: ProcessConsumer;
+++}
+++
+++export interface ProcessWatchOptions {
+++  seconds?: number;
+++  intervalMs?: number;
+++  logPath?: string;
+++  summaryPath?: string;
+++}
+++
+++export interface ProcessWatchSessionSummary {
+++  startedAt: string;
+++  endedAt: string;
+++  source: 'peak-performance';
+++  seconds: number;
+++  intervalMs: number;
+++  samples: number;
+++  started: number;
+++  stopped: number;
+++  baselineProcessCount: number;
+++  finalProcessCount: number;
+++  logPath: string;
+++  orchestration: ProcessLedgerEvent['orchestration'];
+++}
+++
+++export interface ProcessWatchResult {
+++  started: number;
+++  stopped: number;
+++  samples: number;
+++  events: ProcessLedgerEvent[];
+++  logPath: string;
+++  summaryPath: string;
+++  summary: ProcessWatchSessionSummary;
+++}
+++
+++export function defaultProcessLedgerPath(): string {
+++  return join(os.homedir(), '.starlight', 'process-ledger', 'process-events.jsonl');
+++}
+++
+++export function defaultProcessWatchSummaryPath(): string {
+++  return join(os.homedir(), '.starlight', 'process-ledger', 'watch-latest.json');
+++}
+++
+++function processMap(processes: ProcessConsumer[]): Map<number, ProcessConsumer> {
+++  return new Map(processes.map(proc => [proc.pid, proc]));
+++}
+++
+++function createEvent(type: ProcessLedgerEventType, proc: ProcessConsumer): ProcessLedgerEvent {
+++  return {
+++    timestamp: new Date().toISOString(),
+++    type,
+++    source: 'peak-performance',
+++    orchestration: orchestrationContext(),
+++    process: proc,
+++  };
+++}
+++
+++function appendEvents(logPath: string, events: ProcessLedgerEvent[]): void {
+++  if (events.length === 0) return;
+++  mkdirSync(dirname(logPath), { recursive: true });
+++  appendFileSync(logPath, events.map(event => JSON.stringify(event)).join('\n') + '\n', 'utf8');
+++}
+++
+++function orchestrationContext(): ProcessLedgerEvent['orchestration'] {
+++  return {
+++    layer: 'SO',
+++    queen: 'starlight-process-oversight-queen',
+++    workItems: ['ops-jarvisops-desktop-control-plane', 'ops-agent-run-ledger-calendar'],
+++  };
+++}
+++
+++function writeWatchSummary(summaryPath: string, summary: ProcessWatchSessionSummary): void {
+++  mkdirSync(dirname(summaryPath), { recursive: true });
+++  writeFileSync(summaryPath, JSON.stringify(summary, null, 2), 'utf8');
+++}
+++
+++export async function runProcessWatch(options: ProcessWatchOptions = {}): Promise<ProcessWatchResult> {
+++  const seconds = Math.max(1, Math.min(options.seconds ?? 60, 60 * 60));
+++  const intervalMs = Math.max(500, Math.min(options.intervalMs ?? 2_000, 60_000));
+++  const logPath = options.logPath ?? defaultProcessLedgerPath();
+++  const summaryPath = options.summaryPath ?? defaultProcessWatchSummaryPath();
+++  const startedAt = new Date().toISOString();
+++  const endAt = Date.now() + seconds * 1_000;
+++
+++  let previous = processMap(probeProcesses().processes);
+++  const baselineProcessCount = previous.size;
+++  const events: ProcessLedgerEvent[] = [];
+++  let started = 0;
+++  let stopped = 0;
+++  let samples = 1;
+++
+++  while (Date.now() < endAt) {
+++    await sleep(intervalMs);
+++    const current = processMap(probeProcesses().processes);
+++    const batch: ProcessLedgerEvent[] = [];
+++
+++    for (const [pid, proc] of current) {
+++      if (!previous.has(pid)) {
+++        batch.push(createEvent('start', proc));
+++        started++;
+++      }
+++    }
+++
+++    for (const [pid, proc] of previous) {
+++      if (!current.has(pid)) {
+++        batch.push(createEvent('stop', proc));
+++        stopped++;
+++      }
+++    }
+++
+++    appendEvents(logPath, batch);
+++    events.push(...batch);
+++    previous = current;
+++    samples++;
+++  }
+++
+++  const endedAt = new Date().toISOString();
+++  const summary: ProcessWatchSessionSummary = {
+++    startedAt,
+++    endedAt,
+++    source: 'peak-performance',
+++    seconds,
+++    intervalMs,
+++    samples,
+++    started,
+++    stopped,
+++    baselineProcessCount,
+++    finalProcessCount: previous.size,
+++    logPath,
+++    orchestration: orchestrationContext(),
+++  };
+++  writeWatchSummary(summaryPath, summary);
+++
+++  return { started, stopped, samples, events, logPath, summaryPath, summary };
+++}
++diff --git a/src/format/terminal.ts b/src/format/terminal.ts
++index 239bc4e..36dde49 100644
++--- a/src/format/terminal.ts
+++++ b/src/format/terminal.ts
++@@ -4,6 +4,9 @@
++  */
++ import { GATE_NAMES, type GateId } from '../types.js';
++ import type { AuditResult, TrendEntry } from '../types.js';
+++import type { ProcessInfo } from '../core/probes.js';
+++import type { MaintenancePlan } from '../core/maintenance.js';
+++import type { OvernightGuardPlan } from '../core/overnight.js';
++ 
++ type Theme = 'arcanea' | 'plain';
++ 
++@@ -36,6 +39,11 @@ function gradeColor(grade: string): string {
++   return '\x1b[31m';
++ }
++ 
+++function truncate(value: string, max: number): string {
+++  if (value.length <= max) return value;
+++  return `${value.slice(0, Math.max(0, max - 3))}...`;
+++}
+++
++ export function formatAudit(audit: AuditResult, theme: Theme = 'arcanea'): string {
++   const lines: string[] = [];
++   const gc = gradeColor(audit.grade);
++@@ -116,6 +124,21 @@ export function formatCompact(audit: AuditResult, theme: Theme = 'arcanea'): str
++   return `PP ${gc}${audit.totalScore}/${audit.grade}\x1b[0m${critStr}${warnStr}`;
++ }
++ 
+++/** Compact one-line maintenance format for overnight hooks and dashboards */
+++export function formatMaintenanceCompact(plan: MaintenancePlan, options: { color?: boolean } = {}): string {
+++  const color = options.color !== false;
+++  const gc = color ? gradeColor(plan.metrics.grade) : '';
+++  const reset = color ? '\x1b[0m' : '';
+++  const actionStr = plan.actions.length > 0 ? ` | ${plan.actions.length} actions` : '';
+++  return [
+++    `PP ${gc}${plan.metrics.score}/${plan.metrics.grade}${reset}`,
+++    `${plan.posture}`,
+++    `swarms ${plan.swarmPosture}`,
+++    `RAM ${plan.metrics.ramUsedPct}% (${plan.metrics.ramFreeMB}MB free)`,
+++    `proc ${plan.metrics.totalProcesses}`,
+++  ].join(' | ') + actionStr;
+++}
+++
++ /** JSON output for piping to other tools */
++ export function formatJson(audit: AuditResult): string {
++   return JSON.stringify(audit, null, 2);
++@@ -152,3 +175,112 @@ export function formatMarkdown(audit: AuditResult, theme: Theme = 'arcanea'): st
++ 
++   return lines.join('\n');
++ }
+++
+++export function formatProcessInspection(procs: ProcessInfo, limit = 20): string {
+++  const agents = procs.claudeCount + procs.cursorCount + procs.codexCount;
+++  const rows = procs.processes.length > 0 ? procs.processes : procs.topConsumers;
+++  const visibleRows = rows.slice(0, Math.max(1, limit));
+++  const lines: string[] = [];
+++
+++  lines.push('');
+++  lines.push('\x1b[1m  Peak Performance Process Inspection\x1b[0m');
+++  lines.push('');
+++  lines.push(`  Total: ${procs.totalProcesses} | Agents: ${agents} | Node: ${procs.nodeCount} | Protected: ${procs.protectedCount}`);
+++  lines.push(`  Browsers: ${procs.edgeChromeTabs} | Editors: ${procs.vscodeCount}`);
+++  lines.push(`  Showing: ${visibleRows.length}/${rows.length} process rows`);
+++  lines.push('');
+++  lines.push('  Top memory consumers');
+++  lines.push('  PID      MB       Role         Guard     Command');
+++  lines.push('  -------  -------  -----------  --------  ----------------------------------------------');
+++
+++  for (const proc of visibleRows) {
+++    const guard = proc.protected ? 'guarded' : 'review';
+++    const role = proc.role.padEnd(11).slice(0, 11);
+++    const command = truncate(proc.command.replace(/\s+/g, ' '), 78);
+++    lines.push(
+++      `  ${String(proc.pid).padEnd(7)}  ${String(proc.memMB).padStart(7)}  ${role}  ${guard.padEnd(8)}  ${command}`
+++    );
+++    if (proc.protectionReason) {
+++      lines.push(`                                      reason: ${proc.protectionReason}`);
+++    }
+++  }
+++
+++  lines.push('');
+++  lines.push('  Rule: inspect first, write a receipt, then ask before terminating user-owned processes.');
+++  lines.push('');
+++
+++  return lines.join('\n');
+++}
+++
+++export function formatMaintenancePlan(plan: MaintenancePlan): string {
+++  const lines: string[] = [];
+++
+++  lines.push('');
+++  lines.push('\x1b[1m  Peak Performance Maintenance Plan\x1b[0m');
+++  lines.push('');
+++  lines.push(`  ${plan.summary}`);
+++  lines.push(`  RAM: ${plan.metrics.ramUsedPct}% used (${plan.metrics.ramFreeMB}MB free) | Disk: ${plan.metrics.diskFreeGB}GB free | Uptime: ${plan.metrics.uptimeHours}h`);
+++  lines.push(`  Processes: ${plan.metrics.totalProcesses} total | ${plan.metrics.namedAgentCount} named agents | ${plan.metrics.nodeCount} node | ${plan.metrics.reviewableCount} reviewable`);
+++  lines.push('');
+++  lines.push('  Reasons');
+++  for (const reason of plan.reasons) lines.push(`  - ${reason}`);
+++
+++  lines.push('');
+++  lines.push('  Actions');
+++  for (const action of plan.actions) {
+++    const receipt = action.requiresReceipt ? ' | receipt required' : '';
+++    lines.push(`  - [${action.priority}] ${action.id} (${action.owner}, ${action.permission}${receipt})`);
+++    lines.push(`    ${action.reason}`);
+++    if (action.command) lines.push(`    $ ${action.command}`);
+++  }
+++
+++  lines.push('');
+++  lines.push('  Protected roles: ' + JSON.stringify(plan.protectedRoles));
+++  lines.push('  Reviewable roles: ' + JSON.stringify(plan.reviewableRoles));
+++  lines.push('');
+++
+++  return lines.join('\n');
+++}
+++
+++export function formatOvernightGuardPlan(plan: OvernightGuardPlan): string {
+++  const lines: string[] = [];
+++
+++  lines.push('');
+++  lines.push('\x1b[1m  Peak Performance Overnight Guard\x1b[0m');
+++  lines.push('');
+++  lines.push(`  Directive: ${plan.directive.level} | New swarms: ${plan.directive.allowNewSwarms ? 'allowed when bounded' : 'hold'}`);
+++  lines.push(`  ${plan.directive.summary}`);
+++  lines.push(`  ${plan.maintenance.summary}`);
+++  lines.push(`  RAM: ${plan.maintenance.metrics.ramUsedPct}% used (${plan.maintenance.metrics.ramFreeMB}MB free) | Disk: ${plan.maintenance.metrics.diskFreeGB}GB free | Uptime: ${plan.maintenance.metrics.uptimeHours}h`);
+++  lines.push(`  Processes: ${plan.processSnapshot.totalProcesses} total | ${plan.processSnapshot.nodeCount} node | ${plan.processSnapshot.reviewableCount} reviewable`);
+++  lines.push('');
+++  lines.push('  Queen instructions');
+++  for (const item of plan.directive.queenInstructions) lines.push(`  - ${item}`);
+++  lines.push('');
+++  lines.push('  Agent instructions');
+++  for (const item of plan.directive.agentInstructions) lines.push(`  - ${item}`);
+++  lines.push('');
+++  lines.push('  Watch');
+++  lines.push(`  - ${plan.watch.command}`);
+++  lines.push(`  - log: ${plan.watch.logPath}`);
+++  lines.push(`  - summary: ${plan.watch.summaryPath}`);
+++  lines.push('');
+++  lines.push('  SDS');
+++  lines.push(`  - ${plan.sds.statusCommand}`);
+++  lines.push(`  - ${plan.sds.guidance}`);
+++
+++  if (plan.processSnapshot.topReviewable.length > 0) {
+++    lines.push('');
+++    lines.push('  Top reviewable processes');
+++    for (const proc of plan.processSnapshot.topReviewable.slice(0, 8)) {
+++      lines.push(`  - PID ${proc.pid} ${proc.name} ${proc.memMB}MB ${proc.role}: ${proc.actionHint}`);
+++    }
+++  }
+++
+++  lines.push('');
+++  lines.push('  No-touch classes');
+++  for (const item of plan.noTouch) lines.push(`  - ${item}`);
+++  lines.push('');
+++
+++  return lines.join('\n');
+++}
++diff --git a/src/gates/scoring.ts b/src/gates/scoring.ts
++index 47f42e8..f2590f4 100644
++--- a/src/gates/scoring.ts
+++++ b/src/gates/scoring.ts
++@@ -123,6 +123,7 @@ export function scoreProcesses(procs: ProcessInfo): GateScore {
++       vscode: procs.vscodeCount,
++       node: procs.nodeCount,
++       total: procs.totalProcesses,
+++      protected: procs.protectedCount,
++     },
++   };
++ }
++diff --git a/src/index.ts b/src/index.ts
++index 1c12866..0d3a387 100644
++--- a/src/index.ts
+++++ b/src/index.ts
++@@ -26,6 +26,7 @@ export {
++   probeMemory, probeCpu, probeDisk, probeGpu,
++   probeProcesses, probeGit, probeSecrets, probeTemp, probeUptime,
++ } from './core/probes.js';
+++export type { ProcessInfo, ProcessConsumer, ProcessRole } from './core/probes.js';
++ 
++ // Gates
++ export {
++@@ -47,13 +48,35 @@ export { diagnose, formatDiagnoses } from './core/doctor.js';
++ export { takeSnapshot } from './core/snapshot.js';
++ export { runPrepHandover } from './core/handover.js';
++ 
+++// Process ledger
+++export { defaultProcessLedgerPath, defaultProcessWatchSummaryPath, runProcessWatch } from './core/process-ledger.js';
+++export type { ProcessLedgerEvent, ProcessLedgerEventType, ProcessWatchOptions, ProcessWatchResult, ProcessWatchSessionSummary } from './core/process-ledger.js';
+++
+++// Maintenance planning
+++export { buildMaintenancePlan } from './core/maintenance.js';
+++export type { MaintenanceAction, MaintenancePlan, MaintenancePosture, SwarmPosture, ActionPermission } from './core/maintenance.js';
+++
+++// Overnight guard planning
+++export {
+++  buildOvernightGuardPlan,
+++  defaultOvernightGuardDir,
+++  formatOvernightGuardMarkdown,
+++  writeOvernightGuardPlan,
+++} from './core/overnight.js';
+++export type {
+++  OvernightDirectiveLevel,
+++  OvernightGuardPlan,
+++  OvernightGuardWriteResult,
+++  OvernightProcessRow,
+++} from './core/overnight.js';
+++
++ // Fixes
++ export { runAllFixes, cleanNpmCache, cleanTempFiles, applyFix } from './fixes/autofix.js';
++ 
++ // Formatters
++ export {
++   formatAudit, formatTrend, formatCompact,
++-  formatJson, formatMarkdown,
+++  formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan,
++ } from './format/terminal.js';
++ 
++ // Types
++diff --git a/src/integrations/mcp-server/index.ts b/src/integrations/mcp-server/index.ts
++index 0e95fa1..202aa3d 100644
++--- a/src/integrations/mcp-server/index.ts
+++++ b/src/integrations/mcp-server/index.ts
++@@ -10,9 +10,10 @@
++  *   { "peak-performance": { "command": "npx", "args": ["@arcanea/pp", "--mcp"] } }
++  */
++ import { runAudit } from '../../core/audit.js';
+++import { buildMaintenancePlan } from '../../core/maintenance.js';
++ import { TrendTracker } from '../../history/tracker.js';
++ import { runAllFixes } from '../../fixes/autofix.js';
++-import { formatMarkdown } from '../../format/terminal.js';
+++import { formatMaintenanceCompact, formatMarkdown } from '../../format/terminal.js';
++ import { resolve } from 'node:path';
++ 
++ // MCP stdio protocol (simplified — for full SDK, use @modelcontextprotocol/sdk)
++@@ -97,14 +98,18 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
++ 
++       switch (toolName) {
++         case 'pp_audit': {
++-          const audit = runAudit({ cwd: safeCwd(args.cwd as string) });
++-          const tracker = new TrendTracker(resolve(process.cwd(), '.pp', 'history.json'));
++-          tracker.record(audit);
+++          const cwd = safeCwd(args.cwd as string);
++ 
++           let content: string;
++-          if (args.format === 'json') content = JSON.stringify(audit, null, 2);
++-          else if (args.format === 'compact') content = `PP ${audit.totalScore}/${audit.grade}`;
++-          else content = formatMarkdown(audit, (args.theme as 'arcanea' | 'plain') || 'arcanea');
+++          if (args.format === 'compact') {
+++            content = formatMaintenanceCompact(buildMaintenancePlan(cwd), { color: false });
+++          } else {
+++            const audit = runAudit({ cwd });
+++            const tracker = new TrendTracker(resolve(process.cwd(), '.pp', 'history.json'));
+++            tracker.record(audit);
+++            if (args.format === 'json') content = JSON.stringify(audit, null, 2);
+++            else content = formatMarkdown(audit, (args.theme as 'arcanea' | 'plain') || 'arcanea');
+++          }
++ 
++           respond(id, { content: [{ type: 'text', text: content }] });
++           break;
+diff --git a/README.md b/README.md
+index 5550eb6..c8a4fa8 100644
+--- a/README.md
++++ b/README.md
+@@ -87,6 +87,7 @@ Exposes three tools: `pp_audit`, `pp_trend`, `pp_fix`.
+ | `pp inspect [--all|--json]` | Process census with memory, command, role, reasoning, and protected-process classification |
+ | `pp watch [--seconds N] [--interval N] [--log path]` | Bounded process start/stop ledger for Starlight/JarvisOps ingestion |
+ | `pp maintain [--json]` | Predict maintenance posture, swarm posture, and safe action paths |
++| `pp preflight --workload <type> [--reserve-gb N] [--json]` | Admit, bound, or hold CPU/RAM-intensive work against live machine headroom |
+ | `pp overnight [--write|--json|--md]` | Build an overnight swarm guard plan with Queen/SDS/process instructions |
+ | `pp snapshot [notes]` | Screenshot both screens + audit + agent census |
+ 
+@@ -207,6 +208,20 @@ pp maintain
+ pp maintain --json
+ ```
+ 
++### Workload preflight
++
++Run preflight before builds, browser QA, local models, new swarms, or unattended work:
++
++```bash
++pp preflight --workload build
++pp preflight --workload browser-qa --json
++pp preflight --workload local-model --reserve-gb 16
++pp preflight --workload swarm
++pp preflight --workload overnight
++```
++
++The decision is `allow`, `bounded`, or `hold`. PP keeps a 4GB operating-system and application safety floor in addition to the workload reserve. `hold` exits with code 2 and is used only for genuine headroom shortfalls, restart posture, or critical conditions affecting heavy/unattended work. Preflight is read-only: it never starts, stops, schedules, or cleans processes.
++
+ The command predicts and routes work; it does not stop processes, restart the machine, mutate cloud services, or launch new agents.
+ 
+ ## Overnight Guard
+diff --git a/package.json b/package.json
+index 4b19c40..ba1d12f 100644
+--- a/package.json
++++ b/package.json
+@@ -16,7 +16,7 @@
+   "scripts": {
+     "build": "tsc",
+     "dev": "tsc --watch",
+-    "test": "node --test src/**/*.test.ts",
++    "test": "tsx --test src/**/*.test.ts",
+     "lint": "tsc --noEmit",
+     "pp": "tsx src/cli.ts",
+     "pp:audit": "tsx src/cli.ts audit",
+diff --git a/src/cli.ts b/src/cli.ts
+index 791d40a..1fd2a29 100644
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -12,6 +12,7 @@
+  *   pp inspect         Process census and top memory consumers
+  *   pp watch           Bounded process start/stop ledger
+  *   pp maintain        Predictive maintenance and swarm posture
++ *   pp preflight       Workload-aware admission decision
+  *   pp overnight       Overnight swarm guard plan
+  *   pp snapshot        Screenshot + audit bundle (archived)
+  */
+@@ -24,8 +25,9 @@ import { runPrepHandover } from './core/handover.js';
+ import { probeProcesses } from './core/probes.js';
+ import { runProcessWatch } from './core/process-ledger.js';
+ import { buildMaintenancePlan } from './core/maintenance.js';
++import { buildPreflightPlan, isWorkloadType, WORKLOADS } from './core/preflight.js';
+ import { buildOvernightGuardPlan, formatOvernightGuardMarkdown, writeOvernightGuardPlan } from './core/overnight.js';
+-import { formatAudit, formatTrend, formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan } from './format/terminal.js';
++import { formatAudit, formatTrend, formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan, formatPreflightPlan } from './format/terminal.js';
+ import { resolve } from 'node:path';
+ 
+ // Respect NO_COLOR standard (https://no-color.org/)
+@@ -192,6 +194,22 @@ switch (command) {
+     break;
+   }
+ 
++  case 'preflight': {
++    const workloadValue = readStringFlag('workload') ?? args[1] ?? 'interactive';
++    if (!isWorkloadType(workloadValue)) {
++      throw new Error(`Unknown workload "${workloadValue}". Use one of: ${WORKLOADS.join(', ')}.`);
++    }
++    const reserveGB = readNumberFlag('reserve-gb', Number.NaN);
++    const plan = buildPreflightPlan(workloadValue, {
++      cwd: process.cwd(),
++      reserveMB: Number.isFinite(reserveGB) ? reserveGB * 1_024 : undefined,
++    });
++    if (flags.has('--json')) console.log(JSON.stringify(plan, null, 2));
++    else console.log(formatPreflightPlan(plan));
++    if (plan.decision === 'hold') process.exitCode = 2;
++    break;
++  }
++
+   case 'overnight':
+   case 'guard': {
+     const plan = buildOvernightGuardPlan(process.cwd());
+@@ -248,6 +266,7 @@ switch (command) {
+     pp inspect [--all|--json]        Process census + top memory consumers
+     pp watch [--seconds N]           Bounded process start/stop ledger
+     pp maintain [--json]             Predict maintenance + swarm posture
++    pp preflight --workload TYPE     Admit or hold a workload within live resource budgets
+     pp overnight [--write|--json]     Overnight swarm guard plan
+     pp snapshot [notes]              Screenshot + audit archive bundle
+     pp prep                          Preserve agent state and prepare reboot
+@@ -255,6 +274,9 @@ switch (command) {
+   Environment:
+     NO_COLOR=1                       Disable ANSI color codes
+     PP_CWD=/path                     Override working directory
++
++  Preflight workloads:
++    ${WORKLOADS.join(', ')}
+ `);
+ }
+ })().catch((err: unknown) => {
+diff --git a/src/core/audit.ts b/src/core/audit.ts
+index 2b97349..708e79e 100644
+--- a/src/core/audit.ts
++++ b/src/core/audit.ts
+@@ -6,7 +6,11 @@ import type { AuditResult, PPConfig, Recommendation } from '../types.js';
+ import { DEFAULT_CONFIG } from '../types.js';
+ import {
+   probeMemory, probeCpu, probeDisk, probeGpu,
+-  probeProcesses, probeGit, probeSecrets, probeTemp, probeUptime,
++  probeProcesses, probeGit, probeSecrets, probeTemp, probeUptime, probeCrashLoops,
++} from './probes.js';
++import type {
++  MemoryInfo, CpuInfo, DiskInfo, GpuInfo, ProcessInfo,
++  GitInfo, SecretsInfo, TempInfo, CrashLoopInfo,
+ } from './probes.js';
+ import {
+   scoreDisk, scoreMemory, scoreCpuGpu, scoreProcesses,
+@@ -14,7 +18,25 @@ import {
+   scoreAgentLoad, scoreSystem, grade,
+ } from '../gates/scoring.js';
+ 
+-export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
++export interface AuditProbeSnapshot {
++  mem: MemoryInfo;
++  cpu: CpuInfo;
++  disk: DiskInfo;
++  gpu: GpuInfo | null;
++  procs: ProcessInfo;
++  git: GitInfo;
++  secrets: SecretsInfo;
++  temp: TempInfo;
++  uptime: { uptimeHours: number };
++  crashes: CrashLoopInfo;
++}
++
++export interface AuditExecution {
++  audit: AuditResult;
++  snapshot: AuditProbeSnapshot;
++}
++
++export function runAuditWithProbes(config: Partial<PPConfig> = {}): AuditExecution {
+   const cfg = { ...DEFAULT_CONFIG, ...config };
+ 
+   // Run all probes
+@@ -27,13 +49,14 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
+   const secrets = probeSecrets(cfg.cwd);
+   const temp = probeTemp();
+   const uptime = probeUptime();
++  const crashes = probeCrashLoops();
+ 
+   // Score all gates
+   const gates = [
+     scoreDisk(disk),
+     scoreMemory(mem),
+     scoreCpuGpu(cpu, gpu),
+-    scoreProcesses(procs),
++    scoreProcesses(procs, crashes),
+     scoreGit(git),
+     scoreSecrets(secrets),
+     scoreWorkspace(temp),
+@@ -42,7 +65,16 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
+     scoreSystem(disk, mem, uptime.uptimeHours),
+   ];
+ 
+-  const totalScore = gates.reduce((sum, g) => sum + g.score, 0);
++  const rawScore = gates.reduce((sum, g) => sum + g.score, 0);
++  const scoreCaps: string[] = [];
++  let totalScore = rawScore;
++  if (crashes.topAppCrashes >= 10) {
++    totalScore = Math.min(totalScore, 49);
++    scoreCaps.push(`${crashes.topApp} crashed ${crashes.topAppCrashes} times in ${crashes.windowMinutes} minutes`);
++  } else if (gates.some(gate => gate.status === 'CRIT')) {
++    totalScore = Math.min(totalScore, 69);
++    scoreCaps.push('At least one Ten Gate is critical');
++  }
+ 
+   // Collect recommendations
+   const recommendations: Recommendation[] = [];
+@@ -64,6 +96,14 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
+     });
+   }
+ 
++  if (cpu.loadPct > 80 || cpu.systemLoadPct > 40) {
++    recommendations.push({
++      priority: 'high', gate: 'cpu',
++      message: `CPU is ${cpu.loadPct}% busy (${cpu.systemLoadPct}% kernel/interrupt); inspect active process and I/O pressure before launching more work`,
++      autoFixable: false,
++    });
++  }
++
+   if (procs.claudeCount > 4) {
+     recommendations.push({
+       priority: 'high', gate: 'agents',
+@@ -80,6 +120,22 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
+     });
+   }
+ 
++  if (procs.codexTaskRuntimeCount > 8 || procs.duplicateMcpProcesses > 20) {
++    recommendations.push({
++      priority: 'high', gate: 'agents',
++      message: `${procs.codexTaskRuntimeCount} Codex task runtimes own ${procs.mcpCount} MCP servers (${procs.mcpProcessCount} tree processes) using ~${procs.mcpMemoryMB}MB; archive or close inactive tasks instead of killing MCP children`,
++      autoFixable: false,
++    });
++  }
++
++  if (crashes.topAppCrashes >= 3) {
++    recommendations.push({
++      priority: crashes.topAppCrashes >= 10 ? 'urgent' : 'high', gate: 'processes',
++      message: `${crashes.topApp} crashed ${crashes.topAppCrashes} times in ${crashes.windowMinutes} minutes; stop the respawn loop through the owning app or service before cleanup`,
++      autoFixable: false,
++    });
++  }
++
+   if (gpu && gpu.tempC > 80) {
+     recommendations.push({
+       priority: 'high', gate: 'cpu',
+@@ -109,13 +165,24 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
+   const priorityOrder = { urgent: 0, high: 1, medium: 2, low: 3 };
+   recommendations.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+ 
+-  return {
++  const audit: AuditResult = {
+     timestamp: new Date().toISOString(),
+     hostname: os.hostname(),
+     platform: os.platform(),
+     totalScore,
++    rawScore,
++    scoreCaps,
+     grade: grade(totalScore),
+     gates,
+     recommendations,
+   };
++
++  return {
++    audit,
++    snapshot: { mem, cpu, disk, gpu, procs, git, secrets, temp, uptime, crashes },
++  };
++}
++
++export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
++  return runAuditWithProbes(config).audit;
+ }
+diff --git a/src/core/maintenance.ts b/src/core/maintenance.ts
+index fcbc7f5..81ce266 100644
+--- a/src/core/maintenance.ts
++++ b/src/core/maintenance.ts
+@@ -1,7 +1,6 @@
+ import os from 'node:os';
+ import type { AuditResult } from '../types.js';
+-import { runAudit } from './audit.js';
+-import { probeDisk, probeMemory, probeProcesses, probeUptime } from './probes.js';
++import { runAuditWithProbes } from './audit.js';
+ import type { ProcessInfo, ProcessRole } from './probes.js';
+ 
+ export type MaintenancePosture = 'green' | 'watch' | 'constrain' | 'maintenance' | 'restart-soon';
+@@ -36,12 +35,22 @@ export interface MaintenancePlan {
+     totalProcesses: number;
+     nodeCount: number;
+     namedAgentCount: number;
++    codexTaskRuntimeCount: number;
+     aiProcessCount: number;
+     localModelCount: number;
+     mcpCount: number;
++    mcpProcessCount: number;
++    mcpMemoryMB: number;
++    duplicateMcpProcesses: number;
++    agentTreeMemoryMB: number;
+     devServerCount: number;
+     buildCount: number;
+     reviewableCount: number;
++    cpuLoadPct: number;
++    cpuSystemLoadPct: number;
++    recentCrashCount: number;
++    crashLoopApp: string;
++    crashLoopCount: number;
+   };
+   reasons: string[];
+   actions: MaintenanceAction[];
+@@ -66,9 +75,9 @@ function roleCount(procs: ProcessInfo, role: ProcessRole): number {
+ function choosePosture(plan: Pick<MaintenancePlan, 'metrics' | 'reasons'>): MaintenancePosture {
+   const m = plan.metrics;
+   if (m.ramUsedPct >= 94 || m.ramFreeMB < 2_000 || (m.uptimeHours > 168 && m.ramUsedPct >= 82)) return 'restart-soon';
+-  if (m.diskFreeGB < 20 || m.ramUsedPct >= 88 || m.totalProcesses > 850 || m.nodeCount > 140) return 'maintenance';
+-  if (m.ramUsedPct >= 82 || m.totalProcesses > 700 || m.nodeCount > 90 || m.namedAgentCount > 25) return 'constrain';
+-  if (m.ramUsedPct >= 72 || m.uptimeHours > 72 || m.nodeCount > 60 || m.namedAgentCount > 12) return 'watch';
++  if (m.diskFreeGB < 20 || m.ramUsedPct >= 88 || m.totalProcesses > 850 || m.nodeCount > 140 || m.crashLoopCount >= 10 || m.cpuLoadPct >= 95) return 'maintenance';
++  if (m.ramUsedPct >= 82 || m.totalProcesses > 700 || m.nodeCount > 90 || m.namedAgentCount > 25 || m.codexTaskRuntimeCount > 8 || m.duplicateMcpProcesses > 20 || m.mcpMemoryMB > 4_096 || m.cpuLoadPct >= 70 || m.cpuSystemLoadPct >= 35) return 'constrain';
++  if (m.ramUsedPct >= 72 || m.uptimeHours > 72 || m.nodeCount > 60 || m.namedAgentCount > 12 || m.codexTaskRuntimeCount > 4 || m.cpuLoadPct >= 55) return 'watch';
+   return 'green';
+ }
+ 
+@@ -88,15 +97,13 @@ function addAction(actions: MaintenanceAction[], action: MaintenanceAction): voi
+ }
+ 
+ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
+-  const audit: AuditResult = runAudit({ cwd });
+-  const mem = probeMemory();
+-  const disk = probeDisk(cwd);
+-  const uptime = probeUptime();
+-  const procs = probeProcesses();
++  const execution = runAuditWithProbes({ cwd });
++  const audit: AuditResult = execution.audit;
++  const { mem, disk, uptime, procs, cpu, crashes } = execution.snapshot;
+   const namedAgentCount = procs.claudeCount + procs.cursorCount + procs.codexCount;
+   const aiProcessCount = roleCount(procs, 'ai-agent');
+   const localModelCount = roleCount(procs, 'local-model');
+-  const mcpCount = roleCount(procs, 'mcp');
++  const mcpCount = procs.mcpCount;
+   const devServerCount = roleCount(procs, 'dev-server');
+   const buildCount = roleCount(procs, 'build');
+   const reviewableCount = procs.processes.filter(proc => !proc.protected).length;
+@@ -113,7 +120,11 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
+   else if (uptime.uptimeHours > 72) reasons.push(`Uptime is ${uptime.uptimeHours}h; watch for stale agent/process state.`);
+ 
+   if (namedAgentCount > 25) reasons.push(`${namedAgentCount} named AI-agent processes are active; new swarms should be gated.`);
++  if (procs.codexTaskRuntimeCount > 4) reasons.push(`${procs.codexTaskRuntimeCount} Codex task runtimes are active behind ${procs.codexCount} visible Codex process(es).`);
+   if (procs.nodeCount > 90) reasons.push(`${procs.nodeCount} node processes are active; inspect for orphaned build/dev/MCP processes.`);
++  if (procs.mcpCount > 20) reasons.push(`${procs.mcpCount} MCP servers (${procs.mcpProcessCount} tree processes) use ~${procs.mcpMemoryMB}MB; ${procs.duplicateMcpProcesses} are duplicate server-command copies across task runtimes.`);
++  if (cpu.loadPct >= 70 || cpu.systemLoadPct >= 35) reasons.push(`CPU is ${cpu.loadPct}% busy with ${cpu.systemLoadPct}% kernel/interrupt time.`);
++  if (crashes.topAppCrashes > 0) reasons.push(`${crashes.topApp || 'Applications'} recorded ${crashes.topAppCrashes} crashes in ${crashes.windowMinutes} minutes (${crashes.totalCrashes} total recent crashes).`);
+   if (localModelCount > 0) reasons.push(`${localModelCount} local model processes are protected; ask before stopping local LLM work.`);
+   if (devServerCount > 0) reasons.push(`${devServerCount} dev-server processes should be managed through SDS.`);
+   if (buildCount > 0) reasons.push(`${buildCount} build/generator processes are reviewable and require receipts before termination.`);
+@@ -128,12 +139,22 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
+     totalProcesses: procs.totalProcesses,
+     nodeCount: procs.nodeCount,
+     namedAgentCount,
++    codexTaskRuntimeCount: procs.codexTaskRuntimeCount,
+     aiProcessCount,
+     localModelCount,
+     mcpCount,
++    mcpProcessCount: procs.mcpProcessCount,
++    mcpMemoryMB: procs.mcpMemoryMB,
++    duplicateMcpProcesses: procs.duplicateMcpProcesses,
++    agentTreeMemoryMB: procs.agentTreeMemoryMB,
+     devServerCount,
+     buildCount,
+     reviewableCount,
++    cpuLoadPct: cpu.loadPct,
++    cpuSystemLoadPct: cpu.systemLoadPct,
++    recentCrashCount: crashes.totalCrashes,
++    crashLoopApp: crashes.topApp,
++    crashLoopCount: crashes.topAppCrashes,
+   };
+ 
+   const posture = choosePosture({ metrics, reasons });
+@@ -152,7 +173,7 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
+     requiresReceipt: false,
+   });
+ 
+-  if (mem.usedPct >= 82 || procs.nodeCount > 90 || namedAgentCount > 25) {
++  if (mem.usedPct >= 82 || procs.nodeCount > 90 || namedAgentCount > 25 || procs.codexTaskRuntimeCount > 8 || crashes.topAppCrashes >= 10 || cpu.loadPct >= 70) {
+     addAction(actions, {
+       id: 'pause-new-swarms',
+       priority: 'now',
+@@ -165,10 +186,10 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
+     });
+   }
+ 
+-  if (devServerCount > 0 || procs.nodeCount > 70) {
++  if (devServerCount > 0) {
+     addAction(actions, {
+       id: 'sds-reap-dev-servers',
+-      priority: procs.nodeCount > 90 ? 'now' : 'next',
++      priority: devServerCount > 2 ? 'now' : 'next',
+       permission: 'supervisor',
+       owner: 'SDS',
+       command: 'sds status -IncludeUnmanaged; sds reap',
+@@ -179,6 +200,32 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
+     });
+   }
+ 
++  if (crashes.topAppCrashes >= 3) {
++    addAction(actions, {
++      id: 'stop-application-crash-loop',
++      priority: crashes.topAppCrashes >= 10 ? 'now' : 'next',
++      permission: 'confirm',
++      owner: 'Human',
++      reason: `${crashes.topApp} is repeatedly crashing (${crashes.topAppCrashes} times/${crashes.windowMinutes}m). Use the owning app/service's reversible disable or repair path; do not kill Windows Error Reporting or Defender.`,
++      expectedImpact: 'Stops repeated crash dumps, restart churn, kernel CPU, and antivirus rescans at the source.',
++      risk: 'medium',
++      requiresReceipt: true,
++    });
++  }
++
++  if (procs.codexTaskRuntimeCount > 4 || procs.duplicateMcpProcesses > 20) {
++    addAction(actions, {
++      id: 'drain-inactive-codex-task-runtimes',
++      priority: procs.codexTaskRuntimeCount > 8 ? 'now' : 'next',
++      permission: 'confirm',
++      owner: 'Human',
++      reason: `${procs.codexTaskRuntimeCount} Codex task runtimes own ${procs.mcpCount} MCP servers (${procs.mcpProcessCount} tree processes). Archive or close inactive Codex tasks so their full process trees exit cleanly; never kill MCP children in isolation.`,
++      expectedImpact: `Can reclaim up to ~${procs.mcpMemoryMB}MB of MCP working set while preserving active task ownership.`,
++      risk: 'medium',
++      requiresReceipt: true,
++    });
++  }
++
+   if (buildCount > 0 || reviewableCount > 200) {
+     addAction(actions, {
+       id: 'review-reducible-processes',
+diff --git a/src/core/preflight.test.ts b/src/core/preflight.test.ts
+new file mode 100644
+index 0000000..65dcf32
+--- /dev/null
++++ b/src/core/preflight.test.ts
+@@ -0,0 +1,87 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import type { MaintenancePlan } from './maintenance.js';
++import { evaluatePreflight } from './preflight.js';
++
++function maintenance(overrides: Partial<MaintenancePlan['metrics']> = {}, posture: MaintenancePlan['posture'] = 'green'): MaintenancePlan {
++  return {
++    timestamp: '2026-07-11T00:00:00.000Z',
++    hostname: 'test-host',
++    posture,
++    swarmPosture: posture === 'green' ? 'expand' : posture === 'watch' ? 'steady' : posture === 'constrain' ? 'pause-new-swarms' : 'drain-and-handoff',
++    summary: 'test',
++    metrics: {
++      score: 90,
++      grade: 'A',
++      ramUsedPct: 45,
++      ramFreeMB: 18_000,
++      diskFreeGB: 200,
++      uptimeHours: 12,
++      totalProcesses: 250,
++      nodeCount: 20,
++      namedAgentCount: 1,
++      codexTaskRuntimeCount: 2,
++      aiProcessCount: 2,
++      localModelCount: 0,
++      mcpCount: 8,
++      mcpProcessCount: 20,
++      mcpMemoryMB: 1_000,
++      duplicateMcpProcesses: 2,
++      agentTreeMemoryMB: 2_000,
++      devServerCount: 0,
++      buildCount: 0,
++      reviewableCount: 80,
++      cpuLoadPct: 20,
++      cpuSystemLoadPct: 5,
++      recentCrashCount: 0,
++      crashLoopApp: '',
++      crashLoopCount: 0,
++      ...overrides,
++    },
++    reasons: [],
++    actions: [],
++    protectedRoles: {},
++    reviewableRoles: {},
++    relatedWorkItems: [],
++  };
++}
++
++test('admits normal interactive work without unnecessary restrictions', () => {
++  const result = evaluatePreflight(maintenance({ crashLoopApp: 'test.exe', crashLoopCount: 20 }, 'maintenance'), 'interactive');
++  assert.equal(result.decision, 'allow');
++  assert.equal(result.requirements.receiptRequired, false);
++});
++
++test('bounds a build during maintenance instead of blocking normal work', () => {
++  const result = evaluatePreflight(maintenance({ crashLoopApp: 'test.exe', crashLoopCount: 20 }, 'maintenance'), 'build');
++  assert.equal(result.decision, 'bounded');
++  assert.equal(result.hardBlocks.length, 0);
++  assert.match(result.constraints.join(' '), /one bounded workload/);
++});
++
++test('holds a local model when RAM reserve and task budget are insufficient', () => {
++  const result = evaluatePreflight(maintenance({
++    ramFreeMB: 9_000,
++    codexTaskRuntimeCount: 12,
++    crashLoopApp: 'test.exe',
++    crashLoopCount: 20,
++  }, 'maintenance'), 'local-model');
++
++  assert.equal(result.decision, 'hold');
++  assert.match(result.hardBlocks.join(' '), /RAM reserve is short/);
++  assert.match(result.hardBlocks.join(' '), /crash-looping/);
++  assert.match(result.hardBlocks.join(' '), /task runtimes/);
++});
++
++test('uses an explicit local-model reserve when provided', () => {
++  const result = evaluatePreflight(maintenance({ ramFreeMB: 14_500 }), 'local-model', 8_192);
++  assert.equal(result.budget.workloadReserveMB, 8_192);
++  assert.equal(result.budget.requiredFreeMB, 12_288);
++  assert.equal(result.decision, 'allow');
++});
++
++test('holds unattended work under restart-soon posture', () => {
++  const result = evaluatePreflight(maintenance({}, 'restart-soon'), 'overnight');
++  assert.equal(result.decision, 'hold');
++  assert.match(result.hardBlocks.join(' '), /restart-soon/);
++});
+diff --git a/src/core/preflight.ts b/src/core/preflight.ts
+new file mode 100644
+index 0000000..d54788b
+--- /dev/null
++++ b/src/core/preflight.ts
+@@ -0,0 +1,281 @@
++import os from 'node:os';
++import { buildMaintenancePlan } from './maintenance.js';
++import type { MaintenancePlan, MaintenancePosture } from './maintenance.js';
++
++export const WORKLOADS = [
++  'interactive',
++  'build',
++  'browser-qa',
++  'local-model',
++  'swarm',
++  'overnight',
++] as const;
++
++export type WorkloadType = typeof WORKLOADS[number];
++export type PreflightDecision = 'allow' | 'bounded' | 'hold';
++
++interface WorkloadProfile {
++  reserveMB: number;
++  cpuCeilingPct: number;
++  maxTaskRuntimes: number;
++  maxParallelism: number;
++  timeoutMinutes: number;
++  requiresSds: boolean;
++  cloudPreferred: boolean;
++  heavy: boolean;
++  unattended: boolean;
++}
++
++export interface PreflightOptions {
++  cwd?: string;
++  reserveMB?: number;
++}
++
++export interface PreflightPlan {
++  timestamp: string;
++  hostname: string;
++  workload: WorkloadType;
++  decision: PreflightDecision;
++  summary: string;
++  posture: MaintenancePosture;
++  swarmPosture: MaintenancePlan['swarmPosture'];
++  current: {
++    ramFreeMB: number;
++    ramUsedPct: number;
++    cpuLoadPct: number;
++    cpuSystemLoadPct: number;
++    codexTaskRuntimes: number;
++    mcpMemoryMB: number;
++    localModels: number;
++    devServers: number;
++    crashLoopApp: string;
++    crashLoopCount: number;
++  };
++  budget: {
++    workloadReserveMB: number;
++    safetyFloorMB: number;
++    requiredFreeMB: number;
++    projectedFreeMB: number;
++    cpuCeilingPct: number;
++    maxTaskRuntimes: number;
++    maxParallelism: number;
++    timeoutMinutes: number;
++  };
++  requirements: {
++    sdsRequired: boolean;
++    cloudPreferred: boolean;
++    receiptRequired: boolean;
++    stopAfterWork: boolean;
++    explicitModelReserveRecommended: boolean;
++  };
++  hardBlocks: string[];
++  constraints: string[];
++  actions: string[];
++}
++
++const SAFETY_FLOOR_MB = 4_096;
++
++const PROFILES: Record<WorkloadType, WorkloadProfile> = {
++  interactive: {
++    reserveMB: 0,
++    cpuCeilingPct: 90,
++    maxTaskRuntimes: 16,
++    maxParallelism: 1,
++    timeoutMinutes: 0,
++    requiresSds: false,
++    cloudPreferred: false,
++    heavy: false,
++    unattended: false,
++  },
++  build: {
++    reserveMB: 4_096,
++    cpuCeilingPct: 80,
++    maxTaskRuntimes: 12,
++    maxParallelism: 1,
++    timeoutMinutes: 45,
++    requiresSds: false,
++    cloudPreferred: false,
++    heavy: true,
++    unattended: false,
++  },
++  'browser-qa': {
++    reserveMB: 4_096,
++    cpuCeilingPct: 75,
++    maxTaskRuntimes: 8,
++    maxParallelism: 1,
++    timeoutMinutes: 30,
++    requiresSds: true,
++    cloudPreferred: true,
++    heavy: true,
++    unattended: false,
++  },
++  'local-model': {
++    reserveMB: 12_288,
++    cpuCeilingPct: 65,
++    maxTaskRuntimes: 4,
++    maxParallelism: 1,
++    timeoutMinutes: 120,
++    requiresSds: false,
++    cloudPreferred: false,
++    heavy: true,
++    unattended: false,
++  },
++  swarm: {
++    reserveMB: 6_144,
++    cpuCeilingPct: 70,
++    maxTaskRuntimes: 8,
++    maxParallelism: 2,
++    timeoutMinutes: 90,
++    requiresSds: false,
++    cloudPreferred: false,
++    heavy: true,
++    unattended: false,
++  },
++  overnight: {
++    reserveMB: 6_144,
++    cpuCeilingPct: 60,
++    maxTaskRuntimes: 6,
++    maxParallelism: 1,
++    timeoutMinutes: 480,
++    requiresSds: false,
++    cloudPreferred: true,
++    heavy: true,
++    unattended: true,
++  },
++};
++
++export function isWorkloadType(value: string | undefined): value is WorkloadType {
++  return WORKLOADS.includes(value as WorkloadType);
++}
++
++function postureRequiresHold(posture: MaintenancePosture, workload: WorkloadType): boolean {
++  if (posture === 'restart-soon') return workload !== 'interactive';
++  return posture === 'maintenance' && ['local-model', 'swarm', 'overnight'].includes(workload);
++}
++
++function addUnique(items: string[], value: string): void {
++  if (!items.includes(value)) items.push(value);
++}
++
++export function evaluatePreflight(
++  maintenance: MaintenancePlan,
++  workload: WorkloadType,
++  reserveMB?: number,
++): PreflightPlan {
++  const profile = PROFILES[workload];
++  const requestedReserveMB = Math.max(0, Math.round(reserveMB ?? profile.reserveMB));
++  const requiredFreeMB = requestedReserveMB + SAFETY_FLOOR_MB;
++  const projectedFreeMB = maintenance.metrics.ramFreeMB - requestedReserveMB;
++  const hardBlocks: string[] = [];
++  const constraints: string[] = [];
++  const actions: string[] = [];
++
++  if (workload !== 'interactive' && maintenance.metrics.ramFreeMB < requiredFreeMB) {
++    addUnique(hardBlocks, `RAM reserve is short: ${maintenance.metrics.ramFreeMB}MB free, ${requiredFreeMB}MB required.`);
++    addUnique(actions, 'Archive inactive agent tasks and stop completed SDS-owned servers, then rerun preflight.');
++  }
++
++  if (postureRequiresHold(maintenance.posture, workload)) {
++    addUnique(hardBlocks, `PP posture is ${maintenance.posture}; ${workload} work must wait for pressure to drain.`);
++  } else if (workload !== 'interactive' && (maintenance.posture === 'constrain' || maintenance.posture === 'maintenance')) {
++    addUnique(constraints, `PP posture is ${maintenance.posture}; run one bounded workload with no new parallel agents.`);
++  }
++
++  if (maintenance.metrics.cpuLoadPct > profile.cpuCeilingPct) {
++    const reason = `CPU is ${maintenance.metrics.cpuLoadPct}%, above the ${profile.cpuCeilingPct}% ${workload} ceiling.`;
++    if (profile.unattended || workload === 'local-model' || maintenance.metrics.cpuLoadPct >= 95) addUnique(hardBlocks, reason);
++    else addUnique(constraints, reason);
++    addUnique(actions, 'Wait for active CPU work to finish and identify sustained kernel/I/O pressure before retrying.');
++  }
++
++  if (maintenance.metrics.crashLoopCount >= 10) {
++    const reason = `${maintenance.metrics.crashLoopApp} is crash-looping (${maintenance.metrics.crashLoopCount} recent crashes).`;
++    if (['local-model', 'swarm', 'overnight'].includes(workload)) addUnique(hardBlocks, reason);
++    else if (profile.heavy) addUnique(constraints, reason);
++    addUnique(actions, 'Contain or repair the owning crash-loop source; do not kill Defender or Windows Error Reporting.');
++  }
++
++  if (maintenance.metrics.codexTaskRuntimeCount > profile.maxTaskRuntimes) {
++    const reason = `${maintenance.metrics.codexTaskRuntimeCount} Codex task runtimes exceed the ${workload} budget of ${profile.maxTaskRuntimes}.`;
++    if (workload === 'local-model' || workload === 'overnight') addUnique(hardBlocks, reason);
++    else addUnique(constraints, reason);
++    addUnique(actions, 'Archive inactive Codex tasks through the UI so their complete MCP trees exit coherently.');
++  }
++
++  if (maintenance.metrics.mcpMemoryMB > 4_096 && profile.heavy) {
++    addUnique(constraints, `MCP trees already use ${maintenance.metrics.mcpMemoryMB}MB; preserve ownership and reduce them through task closure.`);
++  }
++
++  if (maintenance.metrics.localModelCount > 0 && workload === 'local-model') {
++    addUnique(hardBlocks, 'A local model runtime is already active; do not start a second model workload without an explicit capacity plan.');
++  }
++
++  if (maintenance.metrics.devServerCount > 0) {
++    if (workload === 'local-model' || workload === 'overnight') {
++      addUnique(constraints, `${maintenance.metrics.devServerCount} dev-server processes are active; stop completed servers before this workload.`);
++    } else if (workload === 'browser-qa') {
++      addUnique(constraints, `${maintenance.metrics.devServerCount} dev-server processes are active; reuse or adopt through SDS instead of starting another.`);
++    }
++  }
++
++  if (profile.requiresSds) addUnique(actions, 'Run `sds status -IncludeUnmanaged` first and use an SDS TTL for any required localhost server.');
++  if (profile.cloudPreferred) addUnique(actions, 'Prefer a Vercel preview or cloud runner when the verification must outlive this local loop.');
++  if (profile.timeoutMinutes > 0) addUnique(actions, `Apply a ${profile.timeoutMinutes}-minute workload timeout and stop child processes at completion.`);
++  if (workload === 'local-model' && reserveMB === undefined) {
++    addUnique(constraints, 'The default 12GB model reserve is conservative; pass `--reserve-gb` using the model runtime documented peak for a precise decision.');
++  }
++
++  const decision: PreflightDecision = hardBlocks.length > 0 ? 'hold' : constraints.length > 0 ? 'bounded' : 'allow';
++  const summary = decision === 'allow'
++    ? `${workload} workload is admitted within the current machine budget.`
++    : decision === 'bounded'
++      ? `${workload} workload may run once with the listed limits and cleanup requirements.`
++      : `${workload} workload is held until the blocking conditions are resolved.`;
++
++  return {
++    timestamp: new Date().toISOString(),
++    hostname: maintenance.hostname || os.hostname(),
++    workload,
++    decision,
++    summary,
++    posture: maintenance.posture,
++    swarmPosture: maintenance.swarmPosture,
++    current: {
++      ramFreeMB: maintenance.metrics.ramFreeMB,
++      ramUsedPct: maintenance.metrics.ramUsedPct,
++      cpuLoadPct: maintenance.metrics.cpuLoadPct,
++      cpuSystemLoadPct: maintenance.metrics.cpuSystemLoadPct,
++      codexTaskRuntimes: maintenance.metrics.codexTaskRuntimeCount,
++      mcpMemoryMB: maintenance.metrics.mcpMemoryMB,
++      localModels: maintenance.metrics.localModelCount,
++      devServers: maintenance.metrics.devServerCount,
++      crashLoopApp: maintenance.metrics.crashLoopApp,
++      crashLoopCount: maintenance.metrics.crashLoopCount,
++    },
++    budget: {
++      workloadReserveMB: requestedReserveMB,
++      safetyFloorMB: SAFETY_FLOOR_MB,
++      requiredFreeMB,
++      projectedFreeMB,
++      cpuCeilingPct: profile.cpuCeilingPct,
++      maxTaskRuntimes: profile.maxTaskRuntimes,
++      maxParallelism: profile.maxParallelism,
++      timeoutMinutes: profile.timeoutMinutes,
++    },
++    requirements: {
++      sdsRequired: profile.requiresSds,
++      cloudPreferred: profile.cloudPreferred,
++      receiptRequired: workload !== 'interactive',
++      stopAfterWork: workload !== 'interactive',
++      explicitModelReserveRecommended: workload === 'local-model',
++    },
++    hardBlocks,
++    constraints,
++    actions,
++  };
++}
++
++export function buildPreflightPlan(workload: WorkloadType, options: PreflightOptions = {}): PreflightPlan {
++  const maintenance = buildMaintenancePlan(options.cwd ?? process.cwd());
++  return evaluatePreflight(maintenance, workload, options.reserveMB);
++}
+diff --git a/src/core/probes.ts b/src/core/probes.ts
+index b15ed3d..9f5fcfe 100644
+--- a/src/core/probes.ts
++++ b/src/core/probes.ts
+@@ -37,6 +37,11 @@ function runPS(script: string, timeout = 10_000): string {
+   return runFile('powershell', ['-NoProfile', '-NoLogo', '-Command', script], timeout);
+ }
+ 
++function sleepSync(milliseconds: number): void {
++  const signal = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
++  Atomics.wait(signal, 0, 0, milliseconds);
++}
++
+ // ─── MEMORY ─────────────────────────────────────────────────────
+ export interface MemoryInfo {
+   totalMB: number;
+@@ -57,6 +62,8 @@ export interface CpuInfo {
+   cores: number;
+   logicalCores: number;
+   loadPct: number; // 0-100 CPU usage percentage
++  systemLoadPct: number; // kernel + interrupt share of sampled CPU time
++  sampleMs: number;
+ }
+ 
+ export function probeCpu(): CpuInfo {
+@@ -65,38 +72,100 @@ export function probeCpu(): CpuInfo {
+ 
+   // Physical cores: platform-specific
+   let cores = Math.ceil(logicalCores / 2); // default: assume HT
+-  if (os.platform() === 'win32') {
+-    const wmicOut = runFile('wmic', ['cpu', 'get', 'NumberOfCores', '/format:list']);
+-    const match = wmicOut.match(/NumberOfCores=(\d+)/);
+-    if (match) cores = safeInt(match[1]);
+-  } else if (os.platform() === 'darwin') {
++  if (os.platform() === 'darwin') {
+     const out = runFile('sysctl', ['-n', 'hw.physicalcpu']);
+     if (out) cores = safeInt(out);
+-  } else {
++  } else if (os.platform() === 'linux') {
+     // Linux: count unique core ids
+     const out = runFile('grep', ['-c', '^processor', '/proc/cpuinfo']);
+     if (out) cores = Math.ceil(safeInt(out) / 2);
+   }
+ 
+-  // CPU load: os.loadavg() returns [0,0,0] on Windows — use wmic instead
+-  let loadPct = 0;
+-  if (os.platform() === 'win32') {
+-    const wmicLoad = runFile('wmic', ['cpu', 'get', 'LoadPercentage', '/format:list']);
+-    const loadMatch = wmicLoad.match(/LoadPercentage=(\d+)/);
+-    if (loadMatch) loadPct = safeInt(loadMatch[1]);
+-  } else {
+-    const avg = os.loadavg()[0] ?? 0;
+-    loadPct = Math.min(100, Math.round((avg / logicalCores) * 100));
++  // A short os.cpus() delta is fast, cross-platform, and avoids deprecated WMIC timeouts.
++  const sampleMs = 350;
++  const before = os.cpus();
++  sleepSync(sampleMs);
++  const after = os.cpus();
++  let idleDelta = 0;
++  let totalDelta = 0;
++  let systemDelta = 0;
++  for (let index = 0; index < Math.min(before.length, after.length); index++) {
++    const start = before[index].times;
++    const end = after[index].times;
++    const idle = Math.max(0, end.idle - start.idle);
++    const system = Math.max(0, end.sys - start.sys) + Math.max(0, end.irq - start.irq);
++    const total = Math.max(0,
++      (end.user - start.user) +
++      (end.nice - start.nice) +
++      (end.sys - start.sys) +
++      (end.idle - start.idle) +
++      (end.irq - start.irq)
++    );
++    idleDelta += idle;
++    systemDelta += system;
++    totalDelta += total;
+   }
++  const loadPct = totalDelta > 0 ? Math.min(100, Math.max(0, Math.round((1 - idleDelta / totalDelta) * 100))) : 0;
++  const systemLoadPct = totalDelta > 0 ? Math.min(100, Math.max(0, Math.round(systemDelta / totalDelta * 100))) : 0;
+ 
+   return {
+     model: cpus[0]?.model ?? 'unknown',
+     cores,
+     logicalCores,
+     loadPct,
++    systemLoadPct,
++    sampleMs,
+   };
+ }
+ 
++// ─── RECENT APPLICATION CRASHES ───────────────────────────────
++export interface CrashLoopInfo {
++  windowMinutes: number;
++  totalCrashes: number;
++  topApp: string;
++  topAppCrashes: number;
++  apps: Array<{ name: string; count: number }>;
++}
++
++export function probeCrashLoops(windowMinutes = 15): CrashLoopInfo {
++  const boundedMinutes = Math.max(1, Math.min(120, Math.round(windowMinutes)));
++  const empty: CrashLoopInfo = {
++    windowMinutes: boundedMinutes,
++    totalCrashes: 0,
++    topApp: '',
++    topAppCrashes: 0,
++    apps: [],
++  };
++  if (os.platform() !== 'win32') return empty;
++
++  const script = [
++    '$ErrorActionPreference = "SilentlyContinue";',
++    `$events = @(Get-WinEvent -FilterHashtable @{LogName="Application"; Id=1000; StartTime=(Get-Date).AddMinutes(-${boundedMinutes})});`,
++    '$apps = @();',
++    'foreach ($event in $events) { if ($event.Message -match "Faulting application name:\\s*([^,\\r\\n]+)") { $apps += $Matches[1].Trim() } };',
++    '$groups = @($apps | Group-Object | Sort-Object Count -Descending | Select-Object -First 10 @{n="name";e={$_.Name}},@{n="count";e={$_.Count}});',
++    '$top = $groups | Select-Object -First 1;',
++    `[pscustomobject]@{windowMinutes=${boundedMinutes};totalCrashes=$apps.Count;topApp=if($top){$top.name}else{""};topAppCrashes=if($top){$top.count}else{0};apps=$groups} | ConvertTo-Json -Compress -Depth 4`,
++  ].join(' ');
++
++  const raw = runPS(script, 8_000);
++  if (!raw) return empty;
++  try {
++    const parsed = JSON.parse(raw) as Partial<CrashLoopInfo>;
++    return {
++      windowMinutes: boundedMinutes,
++      totalCrashes: Number(parsed.totalCrashes ?? 0),
++      topApp: String(parsed.topApp ?? ''),
++      topAppCrashes: Number(parsed.topAppCrashes ?? 0),
++      apps: Array.isArray(parsed.apps)
++        ? parsed.apps.map(app => ({ name: String(app.name ?? ''), count: Number(app.count ?? 0) }))
++        : [],
++    };
++  } catch {
++    return empty;
++  }
++}
++
+ // ─── DISK ───────────────────────────────────────────────────────
+ export interface DiskInfo {
+   drive: string;
+@@ -195,6 +264,12 @@ export interface ProcessInfo {
+   vscodeCount: number;
+   edgeChromeTabs: number;
+   protectedCount: number;
++  codexTaskRuntimeCount: number;
++  mcpCount: number;
++  mcpProcessCount: number;
++  mcpMemoryMB: number;
++  duplicateMcpProcesses: number;
++  agentTreeMemoryMB: number;
+   processes: ProcessConsumer[];
+   topConsumers: ProcessConsumer[];
+ }
+@@ -298,7 +373,12 @@ function redactCommandLine(command: string): string {
+ function classifyProcess(name: string, command: string): Pick<ProcessConsumer, 'role' | 'protected' | 'protectionReason'> {
+   const n = name.toLowerCase();
+   const cmd = command.toLowerCase();
+-  const looksLikeMcpServer =
++  const canHostOrLaunchMcp = new Set([
++    'node.exe', 'node', 'python.exe', 'python', 'pythonw.exe', 'pythonw',
++    'bun.exe', 'bun', 'deno.exe', 'deno', 'railway.exe', 'railway',
++    'cmd.exe', 'cmd', 'bash.exe', 'bash', 'sh.exe', 'sh',
++  ]).has(n);
++  const looksLikeMcpServer = canHostOrLaunchMcp && (
+     cmd.includes('modelcontextprotocol') ||
+     /(^|[\s"'\\/])(mcp|mcp-server|mcpserver)([\s"'\\/]|$)/.test(cmd) ||
+     /(^|[\s"'\\/])(serve|server)\s+mcp([\s"']|$)/.test(cmd) ||
+@@ -308,7 +388,13 @@ function classifyProcess(name: string, command: string): Pick<ProcessConsumer, '
+     cmd.includes('railway.js" mcp') ||
+     cmd.includes("railway.js' mcp") ||
+     cmd.includes('railway.exe mcp') ||
+-    cmd.includes('headroom mcp serve');
++    cmd.includes('mcp-server.js') ||
++    cmd.includes('starlight-mcp.js') ||
++    cmd.includes('mcp-obsidian') ||
++    cmd.includes('/packages/mcp/') ||
++    cmd.includes('\\packages\\mcp\\') ||
++    cmd.includes('headroom mcp serve')
++  );
+ 
+   if (n.includes('antigravity') || cmd.includes('antigravity')) {
+     return { role: 'ai-agent', protected: true, protectionReason: 'active coding-agent workspace' };
+@@ -316,6 +402,9 @@ function classifyProcess(name: string, command: string): Pick<ProcessConsumer, '
+   if (PROCESS_MATCHERS.claude(n) || PROCESS_MATCHERS.codex(n) || PROCESS_MATCHERS.cursor(n)) {
+     return { role: 'ai-agent', protected: true, protectionReason: 'active AI agent session' };
+   }
++  if ((n === 'node_repl.exe' || n === 'node_repl') && cmd.includes('openai') && cmd.includes('codex')) {
++    return { role: 'ai-agent', protected: true, protectionReason: 'Codex task runtime' };
++  }
+   if (n.includes('lmstudio') || n.includes('llmster') || cmd.includes('.lmstudio') || n === 'ollama.exe' || n === 'ollama') {
+     return { role: 'local-model', protected: true, protectionReason: 'local model runtime' };
+   }
+@@ -412,6 +501,48 @@ function addProcessCounts(info: ProcessInfo, name: string): void {
+   if (PROCESS_MATCHERS.browser(n)) info.edgeChromeTabs++;
+ }
+ 
++function finalizeProcessInfo(info: ProcessInfo): void {
++  const mcpProcesses = info.processes.filter(proc => proc.role === 'mcp');
++  info.codexTaskRuntimeCount = info.processes.filter(proc => {
++    const name = proc.name.toLowerCase();
++    const command = proc.command.toLowerCase();
++    return (name === 'node_repl.exe' || name === 'node_repl') && command.includes('openai') && command.includes('codex');
++  }).length;
++  info.mcpProcessCount = mcpProcesses.length;
++  info.mcpMemoryMB = Math.round(mcpProcesses.reduce((sum, proc) => sum + proc.memMB, 0) * 10) / 10;
++
++  const mcpPids = new Set(mcpProcesses.map(proc => proc.pid));
++  const mcpParentPids = new Set(mcpProcesses.filter(proc => mcpPids.has(proc.parentPid)).map(proc => proc.parentPid));
++  const mcpServers = mcpProcesses.filter(proc => !mcpParentPids.has(proc.pid));
++  info.mcpCount = mcpServers.length;
++
++  const commandCounts = new Map<string, number>();
++  for (const proc of mcpServers) {
++    const signature = proc.command.toLowerCase().replace(/\s+/g, ' ').trim();
++    commandCounts.set(signature, (commandCounts.get(signature) ?? 0) + 1);
++  }
++  info.duplicateMcpProcesses = [...commandCounts.values()].reduce((sum, count) => sum + Math.max(0, count - 1), 0);
++
++  const children = new Map<number, number[]>();
++  for (const proc of info.processes) {
++    const siblings = children.get(proc.parentPid) ?? [];
++    siblings.push(proc.pid);
++    children.set(proc.parentPid, siblings);
++  }
++  const agentRoots = info.processes.filter(proc => proc.role === 'ai-agent' && (proc.name.toLowerCase() !== 'node_repl.exe' && proc.name.toLowerCase() !== 'node_repl'));
++  const agentTreePids = new Set<number>();
++  const queue = agentRoots.map(proc => proc.pid);
++  while (queue.length > 0) {
++    const pid = queue.shift();
++    if (pid === undefined || agentTreePids.has(pid)) continue;
++    agentTreePids.add(pid);
++    queue.push(...(children.get(pid) ?? []));
++  }
++  info.agentTreeMemoryMB = Math.round(info.processes
++    .filter(proc => agentTreePids.has(proc.pid))
++    .reduce((sum, proc) => sum + proc.memMB, 0) * 10) / 10;
++}
++
+ function probeWindowsProcesses(info: ProcessInfo): boolean {
+   const ps = [
+     '$ErrorActionPreference = "SilentlyContinue";',
+@@ -453,6 +584,7 @@ function probeWindowsProcesses(info: ProcessInfo): boolean {
+ 
+   info.processes = consumers.sort((a, b) => b.memMB - a.memMB);
+   info.topConsumers = info.processes.slice(0, 20);
++  finalizeProcessInfo(info);
+ 
+   return true;
+ }
+@@ -467,6 +599,12 @@ export function probeProcesses(): ProcessInfo {
+     vscodeCount: 0,
+     edgeChromeTabs: 0,
+     protectedCount: 0,
++    codexTaskRuntimeCount: 0,
++    mcpCount: 0,
++    mcpProcessCount: 0,
++    mcpMemoryMB: 0,
++    duplicateMcpProcesses: 0,
++    agentTreeMemoryMB: 0,
+     processes: [],
+     topConsumers: [],
+   };
+@@ -512,6 +650,7 @@ export function probeProcesses(): ProcessInfo {
+     info.processes = info.processes
+       .sort((a, b) => b.memMB - a.memMB);
+     info.topConsumers = info.processes.slice(0, 20);
++    finalizeProcessInfo(info);
+   }
+ 
+   return info;
+diff --git a/src/format/terminal.ts b/src/format/terminal.ts
+index 36dde49..c1a2250 100644
+--- a/src/format/terminal.ts
++++ b/src/format/terminal.ts
+@@ -7,6 +7,7 @@ import type { AuditResult, TrendEntry } from '../types.js';
+ import type { ProcessInfo } from '../core/probes.js';
+ import type { MaintenancePlan } from '../core/maintenance.js';
+ import type { OvernightGuardPlan } from '../core/overnight.js';
++import type { PreflightPlan } from '../core/preflight.js';
+ 
+ type Theme = 'arcanea' | 'plain';
+ 
+@@ -53,6 +54,9 @@ export function formatAudit(audit: AuditResult, theme: Theme = 'arcanea'): strin
+   lines.push(`  ${audit.timestamp} | ${audit.hostname} | ${audit.platform}`);
+   lines.push('');
+   lines.push(`  Score: ${gc}\x1b[1m${audit.totalScore}/100\x1b[0m | Grade: ${gc}\x1b[1m${audit.grade}\x1b[0m`);
++  if (audit.scoreCaps.length > 0) {
++    lines.push(`  \x1b[31mCritical cap applied\x1b[0m (raw Ten Gate sum ${audit.rawScore}): ${audit.scoreCaps.join('; ')}`);
++  }
+   lines.push('');
+   lines.push('  \x1b[90m─────────────────────────────────────────────────\x1b[0m');
+ 
+@@ -135,6 +139,7 @@ export function formatMaintenanceCompact(plan: MaintenancePlan, options: { color
+     `${plan.posture}`,
+     `swarms ${plan.swarmPosture}`,
+     `RAM ${plan.metrics.ramUsedPct}% (${plan.metrics.ramFreeMB}MB free)`,
++    `CPU ${plan.metrics.cpuLoadPct}%`,
+     `proc ${plan.metrics.totalProcesses}`,
+   ].join(' | ') + actionStr;
+ }
+@@ -151,6 +156,7 @@ export function formatMarkdown(audit: AuditResult, theme: Theme = 'arcanea'): st
+   lines.push(`# Peak Performance Audit — ${audit.timestamp.slice(0, 10)}`);
+   lines.push('');
+   lines.push(`**Score:** ${audit.totalScore}/100 | **Grade:** ${audit.grade}`);
++  if (audit.scoreCaps.length > 0) lines.push(`**Critical cap:** raw Ten Gate sum ${audit.rawScore}; ${audit.scoreCaps.join('; ')}`);
+   lines.push(`**Host:** ${audit.hostname} | **Platform:** ${audit.platform}`);
+   lines.push('');
+   lines.push('## Gate Scores');
+@@ -185,7 +191,8 @@ export function formatProcessInspection(procs: ProcessInfo, limit = 20): string
+   lines.push('');
+   lines.push('\x1b[1m  Peak Performance Process Inspection\x1b[0m');
+   lines.push('');
+-  lines.push(`  Total: ${procs.totalProcesses} | Agents: ${agents} | Node: ${procs.nodeCount} | Protected: ${procs.protectedCount}`);
++  lines.push(`  Total: ${procs.totalProcesses} | Named agents: ${agents} | Codex task runtimes: ${procs.codexTaskRuntimeCount} | Node: ${procs.nodeCount} | Protected: ${procs.protectedCount}`);
++  lines.push(`  MCP: ${procs.mcpCount} servers (${procs.mcpProcessCount} tree processes) / ${procs.mcpMemoryMB}MB | Duplicate server copies: ${procs.duplicateMcpProcesses} | Agent tree: ${procs.agentTreeMemoryMB}MB`);
+   lines.push(`  Browsers: ${procs.edgeChromeTabs} | Editors: ${procs.vscodeCount}`);
+   lines.push(`  Showing: ${visibleRows.length}/${rows.length} process rows`);
+   lines.push('');
+@@ -220,7 +227,10 @@ export function formatMaintenancePlan(plan: MaintenancePlan): string {
+   lines.push('');
+   lines.push(`  ${plan.summary}`);
+   lines.push(`  RAM: ${plan.metrics.ramUsedPct}% used (${plan.metrics.ramFreeMB}MB free) | Disk: ${plan.metrics.diskFreeGB}GB free | Uptime: ${plan.metrics.uptimeHours}h`);
+-  lines.push(`  Processes: ${plan.metrics.totalProcesses} total | ${plan.metrics.namedAgentCount} named agents | ${plan.metrics.nodeCount} node | ${plan.metrics.reviewableCount} reviewable`);
++  lines.push(`  CPU: ${plan.metrics.cpuLoadPct}% busy (${plan.metrics.cpuSystemLoadPct}% system/kernel)`);
++  lines.push(`  Processes: ${plan.metrics.totalProcesses} total | ${plan.metrics.namedAgentCount} named agents | ${plan.metrics.codexTaskRuntimeCount} Codex task runtimes | ${plan.metrics.nodeCount} node | ${plan.metrics.reviewableCount} reviewable`);
++  lines.push(`  MCP: ${plan.metrics.mcpCount} servers (${plan.metrics.mcpProcessCount} tree processes) / ${plan.metrics.mcpMemoryMB}MB | ${plan.metrics.duplicateMcpProcesses} duplicate server copies | agent tree ${plan.metrics.agentTreeMemoryMB}MB`);
++  if (plan.metrics.crashLoopCount > 0) lines.push(`  Crashes: ${plan.metrics.crashLoopApp} ${plan.metrics.crashLoopCount}x (${plan.metrics.recentCrashCount} total) in the recent window`);
+   lines.push('');
+   lines.push('  Reasons');
+   for (const reason of plan.reasons) lines.push(`  - ${reason}`);
+@@ -242,6 +252,39 @@ export function formatMaintenancePlan(plan: MaintenancePlan): string {
+   return lines.join('\n');
+ }
+ 
++export function formatPreflightPlan(plan: PreflightPlan): string {
++  const lines: string[] = [];
++  const color = plan.decision === 'allow' ? '\x1b[32m' : plan.decision === 'bounded' ? '\x1b[33m' : '\x1b[31m';
++
++  lines.push('');
++  lines.push('\x1b[1m  Peak Performance Workload Preflight\x1b[0m');
++  lines.push('');
++  lines.push(`  Decision: ${color}\x1b[1m${plan.decision.toUpperCase()}\x1b[0m | Workload: ${plan.workload}`);
++  lines.push(`  ${plan.summary}`);
++  lines.push(`  PP: ${plan.posture} | Swarms: ${plan.swarmPosture}`);
++  lines.push(`  RAM: ${plan.current.ramFreeMB}MB free | Required: ${plan.budget.requiredFreeMB}MB | Projected: ${plan.budget.projectedFreeMB}MB`);
++  lines.push(`  CPU: ${plan.current.cpuLoadPct}% (ceiling ${plan.budget.cpuCeilingPct}%) | Task runtimes: ${plan.current.codexTaskRuntimes}/${plan.budget.maxTaskRuntimes}`);
++  lines.push(`  Limit: ${plan.budget.maxParallelism} parallel | Timeout: ${plan.budget.timeoutMinutes || 'interactive'} minutes`);
++
++  if (plan.hardBlocks.length > 0) {
++    lines.push('');
++    lines.push('  Hard blocks');
++    for (const item of plan.hardBlocks) lines.push(`  - ${item}`);
++  }
++  if (plan.constraints.length > 0) {
++    lines.push('');
++    lines.push('  Constraints');
++    for (const item of plan.constraints) lines.push(`  - ${item}`);
++  }
++  if (plan.actions.length > 0) {
++    lines.push('');
++    lines.push('  Required actions');
++    for (const item of plan.actions) lines.push(`  - ${item}`);
++  }
++  lines.push('');
++  return lines.join('\n');
++}
++
+ export function formatOvernightGuardPlan(plan: OvernightGuardPlan): string {
+   const lines: string[] = [];
+ 
+diff --git a/src/gates/scoring.test.ts b/src/gates/scoring.test.ts
+new file mode 100644
+index 0000000..e2148d4
+--- /dev/null
++++ b/src/gates/scoring.test.ts
+@@ -0,0 +1,88 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import type { CrashLoopInfo, ProcessInfo } from '../core/probes.js';
++import { scoreCpuGpu, scoreProcesses } from './scoring.js';
++
++function processInfo(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
++  return {
++    totalProcesses: 180,
++    nodeCount: 6,
++    claudeCount: 0,
++    cursorCount: 0,
++    codexCount: 1,
++    vscodeCount: 0,
++    edgeChromeTabs: 4,
++    protectedCount: 20,
++    codexTaskRuntimeCount: 1,
++    mcpCount: 5,
++    mcpProcessCount: 10,
++    mcpMemoryMB: 350,
++    duplicateMcpProcesses: 0,
++    agentTreeMemoryMB: 1_200,
++    processes: [],
++    topConsumers: [],
++    ...overrides,
++  };
++}
++
++const noCrashes: CrashLoopInfo = {
++  windowMinutes: 15,
++  totalCrashes: 0,
++  topApp: '',
++  topAppCrashes: 0,
++  apps: [],
++};
++
++test('CPU gate treats kernel-heavy saturation as degraded', () => {
++  const result = scoreCpuGpu({
++    model: 'test',
++    cores: 8,
++    logicalCores: 16,
++    loadPct: 82,
++    systemLoadPct: 53,
++    sampleMs: 350,
++  }, null);
++
++  assert.equal(result.score, 4);
++  assert.equal(result.status, 'WARN');
++  assert.equal(result.metrics.systemLoadPct, 53);
++});
++
++test('process gate becomes critical for an application crash loop', () => {
++  const crashes: CrashLoopInfo = {
++    windowMinutes: 15,
++    totalCrashes: 44,
++    topApp: 'YB9.UserCenter.exe',
++    topAppCrashes: 44,
++    apps: [{ name: 'YB9.UserCenter.exe', count: 44 }],
++  };
++
++  const result = scoreProcesses(processInfo(), crashes);
++
++  assert.equal(result.score, 1);
++  assert.equal(result.status, 'CRIT');
++  assert.match(result.detail, /44 crashes\/15m/);
++});
++
++test('process gate accounts for hidden task runtimes and duplicate MCP servers', () => {
++  const result = scoreProcesses(processInfo({
++    totalProcesses: 557,
++    nodeCount: 111,
++    codexTaskRuntimeCount: 17,
++    mcpCount: 86,
++    mcpProcessCount: 205,
++    mcpMemoryMB: 7_034,
++    duplicateMcpProcesses: 80,
++  }), noCrashes);
++
++  assert.equal(result.score, 0);
++  assert.equal(result.status, 'CRIT');
++  assert.equal(result.metrics.taskRuntimes, 17);
++  assert.equal(result.metrics.duplicateMcp, 80);
++});
++
++test('healthy process footprint retains a perfect gate', () => {
++  const result = scoreProcesses(processInfo(), noCrashes);
++  assert.equal(result.score, 10);
++  assert.equal(result.status, 'PERFECT');
++});
+diff --git a/src/gates/scoring.ts b/src/gates/scoring.ts
+index f2590f4..c978182 100644
+--- a/src/gates/scoring.ts
++++ b/src/gates/scoring.ts
+@@ -7,7 +7,7 @@ import { join } from 'node:path';
+ import type { GateScore, GateId, Recommendation } from '../types.js';
+ import type {
+   MemoryInfo, CpuInfo, DiskInfo, GpuInfo,
+-  ProcessInfo, GitInfo, SecretsInfo, TempInfo,
++  ProcessInfo, GitInfo, SecretsInfo, TempInfo, CrashLoopInfo,
+ } from '../core/probes.js';
+ 
+ function status(score: number): GateScore['status'] {
+@@ -58,7 +58,7 @@ export function scoreMemory(mem: MemoryInfo): GateScore {
+ // ─── Fire (CPU + GPU) ───────────────────────────────────────────
+ export function scoreCpuGpu(cpu: CpuInfo, gpu: GpuInfo | null): GateScore {
+   let score = 10;
+-  let detail = `${cpu.model} (${cpu.logicalCores} threads)`;
++  let detail = `${cpu.model} (${cpu.logicalCores} threads) | CPU ${cpu.loadPct}% (${cpu.systemLoadPct}% system)`;
+ 
+   if (gpu) {
+     detail += ` | ${gpu.name} ${gpu.tempC}°C`;
+@@ -69,10 +69,14 @@ export function scoreCpuGpu(cpu: CpuInfo, gpu: GpuInfo | null): GateScore {
+     if (gpu.utilPct > 90) score -= 2;
+   }
+ 
+-  // CPU load (percentage-based, works on all platforms)
+-  if (cpu.loadPct > 95) score -= 3;
+-  else if (cpu.loadPct > 80) score -= 2;
+-  else if (cpu.loadPct > 60) score -= 1;
++  // Sustained saturation and kernel-heavy pressure make an interactive machine unready.
++  if (cpu.loadPct >= 95) score = Math.min(score, 2);
++  else if (cpu.loadPct >= 85) score = Math.min(score, 4);
++  else if (cpu.loadPct >= 70) score = Math.min(score, 6);
++  else if (cpu.loadPct >= 55) score = Math.min(score, 8);
++
++  if (cpu.systemLoadPct >= 45) score = Math.min(score, 4);
++  else if (cpu.systemLoadPct >= 30) score = Math.min(score, 6);
+ 
+   score = Math.max(0, Math.min(10, score));
+ 
+@@ -84,46 +88,67 @@ export function scoreCpuGpu(cpu: CpuInfo, gpu: GpuInfo | null): GateScore {
+     metrics: {
+       cores: cpu.logicalCores,
+       loadPct: cpu.loadPct,
++      systemLoadPct: cpu.systemLoadPct,
++      sampleMs: cpu.sampleMs,
+       ...(gpu ? { gpuTemp: gpu.tempC, gpuUtil: gpu.utilPct, gpuMem: `${gpu.memUsedMB}/${gpu.memTotalMB}MB` } : {}),
+     },
+   };
+ }
+ 
+ // ─── Heart (Process Health) ─────────────────────────────────────
+-export function scoreProcesses(procs: ProcessInfo): GateScore {
++export function scoreProcesses(procs: ProcessInfo, crashes: CrashLoopInfo = { windowMinutes: 15, totalCrashes: 0, topApp: '', topAppCrashes: 0, apps: [] }): GateScore {
+   let score = 10;
+-  const agents = procs.claudeCount + procs.cursorCount + procs.codexCount;
+-  const nodePerAgent = agents > 0 ? Math.round(procs.nodeCount / agents) : procs.nodeCount;
++  const namedAgents = procs.claudeCount + procs.cursorCount + procs.codexCount;
++  const logicalRuntimes = Math.max(namedAgents, procs.codexTaskRuntimeCount);
++  const nodePerRuntime = logicalRuntimes > 0 ? Math.round(procs.nodeCount / logicalRuntimes) : procs.nodeCount;
+ 
+-  // Agent instance count
+-  if (procs.claudeCount > 10) score -= 3;
+-  else if (procs.claudeCount > 6) score -= 2;
+-  else if (procs.claudeCount > 4) score -= 1;
++  if (logicalRuntimes > 12) score -= 4;
++  else if (logicalRuntimes > 8) score -= 3;
++  else if (logicalRuntimes > 4) score -= 2;
++  else if (logicalRuntimes > 2) score -= 1;
+ 
+-  // Node:Agent ratio (healthy is 3-5:1)
+-  if (nodePerAgent > 15) score -= 3;
+-  else if (nodePerAgent > 10) score -= 2;
+-  else if (nodePerAgent > 7) score -= 1;
++  if (procs.duplicateMcpProcesses > 60) score -= 4;
++  else if (procs.duplicateMcpProcesses > 30) score -= 3;
++  else if (procs.duplicateMcpProcesses > 10) score -= 2;
++  else if (procs.duplicateMcpProcesses > 0) score -= 1;
++
++  // Node:runtime ratio catches unexplained Node growth after logical task counting.
++  if (nodePerRuntime > 15) score -= 3;
++  else if (nodePerRuntime > 10) score -= 2;
++  else if (nodePerRuntime > 7) score -= 1;
+ 
+   // Total process count
+-  if (procs.totalProcesses > 600) score -= 2;
++  if (procs.totalProcesses > 550) score -= 2;
+   else if (procs.totalProcesses > 400) score -= 1;
+ 
++  if (crashes.topAppCrashes >= 30) score = Math.min(score, 1);
++  else if (crashes.topAppCrashes >= 10) score = Math.min(score, 3);
++  else if (crashes.topAppCrashes >= 3) score -= 2;
++
+   score = Math.max(0, Math.min(10, score));
+ 
+   return {
+     id: 'processes',
+     score,
+     status: status(score),
+-    detail: `${agents} AI agents, ${procs.nodeCount} node, ${procs.totalProcesses} total (${nodePerAgent}:1 node/agent)`,
++    detail: `${namedAgents} named agents, ${logicalRuntimes} task runtimes, ${procs.nodeCount} node, ${procs.mcpCount} MCP servers (${procs.mcpProcessCount} tree processes) / ${procs.mcpMemoryMB}MB, ${procs.totalProcesses} total${crashes.topAppCrashes > 0 ? ` | ${crashes.topApp} ${crashes.topAppCrashes} crashes/${crashes.windowMinutes}m` : ''}`,
+     metrics: {
+       claude: procs.claudeCount,
+       cursor: procs.cursorCount,
+       codex: procs.codexCount,
+       vscode: procs.vscodeCount,
+       node: procs.nodeCount,
++      taskRuntimes: logicalRuntimes,
++      mcp: procs.mcpCount,
++      mcpProcesses: procs.mcpProcessCount,
++      mcpMemoryMB: procs.mcpMemoryMB,
++      duplicateMcp: procs.duplicateMcpProcesses,
++      nodePerRuntime,
+       total: procs.totalProcesses,
+       protected: procs.protectedCount,
++      recentCrashes: crashes.totalCrashes,
++      crashLoopApp: crashes.topApp,
++      crashLoopCount: crashes.topAppCrashes,
+     },
+   };
+ }
+@@ -243,13 +268,16 @@ export function scoreAgentLoad(mem: MemoryInfo, procs: ProcessInfo): GateScore {
+   let score = 10;
+   const agents = procs.claudeCount + procs.cursorCount + procs.codexCount;
+ 
+-  // Agent memory pressure: estimate agent RAM consumption
+-  const estAgentMB = procs.claudeCount * 450 + procs.cursorCount * 300 + procs.codexCount * 200;
++  // Prefer the observed AI-agent process tree; use the old estimate only on fallback probes.
++  const estAgentMB = procs.agentTreeMemoryMB > 0
++    ? procs.agentTreeMemoryMB
++    : procs.claudeCount * 450 + procs.cursorCount * 300 + procs.codexCount * 200;
+   const agentPct = Math.round(estAgentMB / mem.totalMB * 100);
+ 
+-  if (agentPct > 40) score -= 4;
+-  else if (agentPct > 30) score -= 3;
+-  else if (agentPct > 20) score -= 1;
++  if (agentPct > 50) score = 2;
++  else if (agentPct > 35) score = 4;
++  else if (agentPct > 25) score = 6;
++  else if (agentPct > 15) score = 8;
+ 
+   // Combined system pressure
+   if (mem.usedPct > 90 && agents > 3) score -= 2;
+@@ -260,8 +288,8 @@ export function scoreAgentLoad(mem: MemoryInfo, procs: ProcessInfo): GateScore {
+     id: 'agents',
+     score,
+     status: status(score),
+-    detail: `${agents} agents using ~${estAgentMB}MB (${agentPct}% of ${mem.totalMB}MB)`,
+-    metrics: { agents, estAgentMB, agentPct },
++    detail: `${agents} named agents / ${procs.codexTaskRuntimeCount} Codex task runtimes using ~${estAgentMB}MB (${agentPct}% of ${mem.totalMB}MB)`,
++    metrics: { agents, taskRuntimes: procs.codexTaskRuntimeCount, estAgentMB, agentPct },
+   };
+ }
+ 
+diff --git a/src/index.ts b/src/index.ts
+index 0d3a387..8794e71 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -19,14 +19,15 @@
+  */
+ 
+ // Core
+-export { runAudit } from './core/audit.js';
++export { runAudit, runAuditWithProbes } from './core/audit.js';
++export type { AuditExecution, AuditProbeSnapshot } from './core/audit.js';
+ 
+ // Probes
+ export {
+   probeMemory, probeCpu, probeDisk, probeGpu,
+-  probeProcesses, probeGit, probeSecrets, probeTemp, probeUptime,
++  probeProcesses, probeGit, probeSecrets, probeTemp, probeUptime, probeCrashLoops,
+ } from './core/probes.js';
+-export type { ProcessInfo, ProcessConsumer, ProcessRole } from './core/probes.js';
++export type { ProcessInfo, ProcessConsumer, ProcessRole, CrashLoopInfo } from './core/probes.js';
+ 
+ // Gates
+ export {
+@@ -56,6 +57,10 @@ export type { ProcessLedgerEvent, ProcessLedgerEventType, ProcessWatchOptions, P
+ export { buildMaintenancePlan } from './core/maintenance.js';
+ export type { MaintenanceAction, MaintenancePlan, MaintenancePosture, SwarmPosture, ActionPermission } from './core/maintenance.js';
+ 
++// Workload admission planning
++export { buildPreflightPlan, evaluatePreflight, isWorkloadType, WORKLOADS } from './core/preflight.js';
++export type { PreflightDecision, PreflightOptions, PreflightPlan, WorkloadType } from './core/preflight.js';
++
+ // Overnight guard planning
+ export {
+   buildOvernightGuardPlan,
+@@ -76,7 +81,7 @@ export { runAllFixes, cleanNpmCache, cleanTempFiles, applyFix } from './fixes/au
+ // Formatters
+ export {
+   formatAudit, formatTrend, formatCompact,
+-  formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan,
++  formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan, formatPreflightPlan,
+ } from './format/terminal.js';
+ 
+ // Types
+diff --git a/src/integrations/mcp-server/index.ts b/src/integrations/mcp-server/index.ts
+index 202aa3d..77a05af 100644
+--- a/src/integrations/mcp-server/index.ts
++++ b/src/integrations/mcp-server/index.ts
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env node
+ /**
+  * Peak Performance MCP Server
+- * Exposes pp_audit, pp_fix, pp_trend as MCP tools.
++ * Exposes PP audit, preflight, fix, and trend tools.
+  * Any AI agent with MCP support (Claude, Cursor, Codex, etc.) can use this.
+  *
+  * Usage:
+@@ -11,6 +11,7 @@
+  */
+ import { runAudit } from '../../core/audit.js';
+ import { buildMaintenancePlan } from '../../core/maintenance.js';
++import { buildPreflightPlan, isWorkloadType, WORKLOADS } from '../../core/preflight.js';
+ import { TrendTracker } from '../../history/tracker.js';
+ import { runAllFixes } from '../../fixes/autofix.js';
+ import { formatMaintenanceCompact, formatMarkdown } from '../../format/terminal.js';
+@@ -38,6 +39,19 @@ const TOOLS = [
+       },
+     },
+   },
++  {
++    name: 'pp_preflight',
++    description: 'Return an allow, bounded, or hold decision before CPU/RAM-intensive local work. Read-only; never starts or stops processes.',
++    inputSchema: {
++      type: 'object',
++      required: ['workload'],
++      properties: {
++        workload: { type: 'string', enum: WORKLOADS },
++        reserveGB: { type: 'number', minimum: 0, description: 'Optional explicit workload peak reserve, especially for local models.' },
++        cwd: { type: 'string', description: 'Working directory to audit (default: current)' },
++      },
++    },
++  },
+   {
+     name: 'pp_trend',
+     description: 'Show score history and trend direction.',
+@@ -97,6 +111,23 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
+       const args = ((params as Record<string, unknown>)?.arguments || {}) as Record<string, unknown>;
+ 
+       switch (toolName) {
++        case 'pp_preflight': {
++          const workload = typeof args.workload === 'string' ? args.workload : undefined;
++          if (!isWorkloadType(workload)) {
++            if (id !== undefined) respondError(id, -32602, `Invalid workload. Use one of: ${WORKLOADS.join(', ')}`);
++            break;
++          }
++          const reserveGB = typeof args.reserveGB === 'number' && Number.isFinite(args.reserveGB)
++            ? Math.max(0, args.reserveGB)
++            : undefined;
++          const plan = buildPreflightPlan(workload, {
++            cwd: safeCwd(args.cwd as string),
++            reserveMB: reserveGB === undefined ? undefined : reserveGB * 1_024,
++          });
++          respond(id, { content: [{ type: 'text', text: JSON.stringify(plan, null, 2) }] });
++          break;
++        }
++
+         case 'pp_audit': {
+           const cwd = safeCwd(args.cwd as string);
+ 
+diff --git a/src/types.ts b/src/types.ts
+index 924f4a3..caa139d 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -27,6 +27,8 @@ export interface AuditResult {
+   hostname: string;
+   platform: NodeJS.Platform;
+   totalScore: number; // 0-100
++  rawScore: number; // sum of Ten Gate scores before critical health caps
++  scoreCaps: string[];
+   grade: string;
+   gates: GateScore[];
+   recommendations: Recommendation[];
