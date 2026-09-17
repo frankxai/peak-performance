@@ -19,14 +19,15 @@
  */
 
 // Core
-export { runAudit } from './core/audit.js';
+export { runAudit, runAuditWithProbes } from './core/audit.js';
+export type { AuditExecution, AuditProbeSnapshot } from './core/audit.js';
 
 // Probes
 export {
   probeMemory, probeCpu, probeDisk, probeGpu,
-  probeProcesses, probeGit, probeSecrets, probeTemp, probeUptime,
+  probeProcesses, probeGit, probeSecrets, probeTemp, probeUptime, probeCrashLoops,
 } from './core/probes.js';
-export type { ProcessInfo, ProcessConsumer, ProcessRole } from './core/probes.js';
+export type { ProcessInfo, ProcessConsumer, ProcessRole, CrashLoopInfo } from './core/probes.js';
 
 // Gates
 export {
@@ -56,6 +57,10 @@ export type { ProcessLedgerEvent, ProcessLedgerEventType, ProcessWatchOptions, P
 export { buildMaintenancePlan } from './core/maintenance.js';
 export type { MaintenanceAction, MaintenancePlan, MaintenancePosture, SwarmPosture, ActionPermission } from './core/maintenance.js';
 
+// Workload admission planning
+export { buildPreflightPlan, evaluatePreflight, isWorkloadType, WORKLOADS } from './core/preflight.js';
+export type { PreflightDecision, PreflightOptions, PreflightPlan, WorkloadType } from './core/preflight.js';
+
 // Overnight guard planning
 export {
   buildOvernightGuardPlan,
@@ -76,7 +81,7 @@ export { runAllFixes, cleanNpmCache, cleanTempFiles, applyFix } from './fixes/au
 // Formatters
 export {
   formatAudit, formatTrend, formatCompact,
-  formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan,
+  formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan, formatPreflightPlan,
 } from './format/terminal.js';
 
 // Types

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Peak Performance MCP Server
- * Exposes pp_audit, pp_fix, pp_trend as MCP tools.
+ * Exposes PP audit, preflight, fix, and trend tools.
  * Any AI agent with MCP support (Claude, Cursor, Codex, etc.) can use this.
  *
  * Usage:
@@ -11,6 +11,7 @@
  */
 import { runAudit } from '../../core/audit.js';
 import { buildMaintenancePlan } from '../../core/maintenance.js';
+import { buildPreflightPlan, isWorkloadType, WORKLOADS } from '../../core/preflight.js';
 import { TrendTracker } from '../../history/tracker.js';
 import { runAllFixes } from '../../fixes/autofix.js';
 import { formatMaintenanceCompact, formatMarkdown } from '../../format/terminal.js';
@@ -34,6 +35,19 @@ const TOOLS = [
       properties: {
         format: { type: 'string', enum: ['json', 'markdown', 'compact'], default: 'markdown' },
         theme: { type: 'string', enum: ['arcanea', 'plain'], default: 'arcanea' },
+        cwd: { type: 'string', description: 'Working directory to audit (default: current)' },
+      },
+    },
+  },
+  {
+    name: 'pp_preflight',
+    description: 'Return an allow, bounded, or hold decision before CPU/RAM-intensive local work. Read-only; never starts or stops processes.',
+    inputSchema: {
+      type: 'object',
+      required: ['workload'],
+      properties: {
+        workload: { type: 'string', enum: WORKLOADS },
+        reserveGB: { type: 'number', minimum: 0, description: 'Optional explicit workload peak reserve, especially for local models.' },
         cwd: { type: 'string', description: 'Working directory to audit (default: current)' },
       },
     },
@@ -97,6 +111,23 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
       const args = ((params as Record<string, unknown>)?.arguments || {}) as Record<string, unknown>;
 
       switch (toolName) {
+        case 'pp_preflight': {
+          const workload = typeof args.workload === 'string' ? args.workload : undefined;
+          if (!isWorkloadType(workload)) {
+            if (id !== undefined) respondError(id, -32602, `Invalid workload. Use one of: ${WORKLOADS.join(', ')}`);
+            break;
+          }
+          const reserveGB = typeof args.reserveGB === 'number' && Number.isFinite(args.reserveGB)
+            ? Math.max(0, args.reserveGB)
+            : undefined;
+          const plan = buildPreflightPlan(workload, {
+            cwd: safeCwd(args.cwd as string),
+            reserveMB: reserveGB === undefined ? undefined : reserveGB * 1_024,
+          });
+          respond(id, { content: [{ type: 'text', text: JSON.stringify(plan, null, 2) }] });
+          break;
+        }
+
         case 'pp_audit': {
           const cwd = safeCwd(args.cwd as string);
 
