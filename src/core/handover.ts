@@ -6,7 +6,7 @@
  * Exports summaries to the User's Desktop as HTML & TXT.
  */
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import os from 'node:os';
 
@@ -26,8 +26,14 @@ interface RepoAudit {
   uncommittedList: string[];
   lastCommit: string;
   checkpointCreated: boolean;
+  checkpointMode: 'commit' | 'stash' | 'none';
+  resumeCommand: string;
   activeSession?: SessionData;
 }
+
+// A WIP commit on a shared branch is one push from a production deploy, so those branches get a
+// stash instead. Measured 2026-09-19: 106 repos carried an ASPH commit at HEAD, 15 of them on main.
+const PROTECTED_BRANCHES = new Set(['main', 'master', 'unknown', '']);
 
 function runCmd(cmd: string, cwd: string): string {
   try {
@@ -139,27 +145,47 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
     }
 
     let checkpointCreated = false;
-    let wipTag = '';
+    let checkpointMode: RepoAudit['checkpointMode'] = 'none';
+    let resumeCommand = '';
     if (uncommittedCount > 0) {
-      // Create WIP commit to stash changes safely
-      runCmd('git add -A', repoPath);
-      const commitOut = runCmd('git commit -m "wip: pre-reboot checkpoint (ASPH)" --no-verify', repoPath);
-      if (commitOut) {
-        checkpointCreated = true;
-        // Genius safety: tag + note the objective + touched for traceability (smarter than plain commit)
-        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0,19);
-        wipTag = `asph-wip-${ts}`;
-        runCmd(`git tag ${wipTag}`, repoPath);
-        // Safer note via temp file (avoids quoting hell with newlines/special chars in objective)
-        const noteContent = `ASPH WIP\nBranch: ${branch}\nObjective: ${(matchedSession ? matchedSession.lastPrompt.replace(/\n/g, ' ').slice(0,300) : 'N/A')}\nTouched: ${uncommittedList.slice(0,10).join(' ')}\nResume with: git reset HEAD~1 --mixed\nFull prompt + visual console in agentic-ops/lifecycle/asph-genius-recovery.html`;
-        const noteFile = join(repoPath, '.asph-wip', `note-${ts}.txt`);
-        try { require('fs').writeFileSync(noteFile, noteContent); runCmd(`git notes add -f -F "${noteFile}"`, repoPath); } catch(e){ /* non-fatal */ }
-        // Export patch for extra safety / visual diff later
-        const patchDir = join(repoPath, '.asph-wip');
-        if (!existsSync(patchDir)) {
-          runCmd(`mkdir -p "${patchDir}"`, repoPath); // cross platform-ish
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0,19);
+      // Evidence lives OUTSIDE the tree. A patch written into <repo>/.asph-wip/ was swept up by the
+      // next checkpoint's `git add -A`, grew to 216 MB blobs, and made the repo unpushable (GH001).
+      const evidenceDir = join(os.homedir(), '.starlight', 'asph', name);
+      try { mkdirSync(evidenceDir, { recursive: true }); } catch { /* non-fatal */ }
+      const patch = runCmd('git diff HEAD', repoPath);
+      const untracked = runCmd('git ls-files --others --exclude-standard', repoPath);
+      try { writeFileSync(join(evidenceDir, `asph-${ts}.patch`), `${patch}\n\n# untracked:\n${untracked}\n`); } catch { /* non-fatal */ }
+
+      const objective = matchedSession ? matchedSession.lastPrompt.replace(/\n/g, ' ').slice(0, 300) : 'N/A';
+      const stashCheckpoint = (): boolean => {
+        const out = runCmd(`git stash push --include-untracked -m "asph ${ts}: ${objective.slice(0, 80)}"`, repoPath);
+        if (!/Saved working directory/.test(out)) return false;
+        checkpointMode = 'stash';
+        resumeCommand = 'git stash pop';
+        return true;
+      };
+
+      if (PROTECTED_BRANCHES.has(branch)) {
+        checkpointCreated = stashCheckpoint();
+      } else {
+        runCmd('git add -A', repoPath);
+        runCmd('git reset -q -- .asph-wip', repoPath);
+        // Hooks stay armed: a checkpoint that bypasses gitleaks can commit a secret. If a hook
+        // refuses, the work is still preserved by the stash below.
+        const commitOut = runCmd('git commit -m "wip: pre-reboot checkpoint (ASPH)"', repoPath);
+        if (commitOut) {
+          checkpointCreated = true;
+          checkpointMode = 'commit';
+          resumeCommand = 'git reset HEAD~1 --mixed';
+          runCmd(`git tag asph-wip-${ts}`, repoPath);
+          const noteFile = join(evidenceDir, `note-${ts}.txt`);
+          const noteContent = `ASPH WIP\nBranch: ${branch}\nObjective: ${objective}\nTouched: ${uncommittedList.slice(0,10).join(' ')}\nResume with: ${resumeCommand}\nPatch: ${join(evidenceDir, `asph-${ts}.patch`)}`;
+          try { writeFileSync(noteFile, noteContent); runCmd(`git notes add -f -F "${noteFile}"`, repoPath); } catch { /* non-fatal */ }
+        } else {
+          runCmd('git reset -q', repoPath);
+          checkpointCreated = stashCheckpoint();
         }
-        runCmd(`git diff HEAD~1 > "${patchDir}/asph-${ts}.patch"`, repoPath);
       }
     }
 
@@ -171,6 +197,8 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
       uncommittedList,
       lastCommit,
       checkpointCreated,
+      checkpointMode,
+      resumeCommand,
       activeSession: matchedSession
     });
   }
@@ -187,7 +215,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
   txtContent += `RECOVERY ACTIONS:\n`;
   txtContent += `1. Reboot machine to clean RAM and close active processes.\n`;
   txtContent += `2. Open terminal in each repo directory.\n`;
-  txtContent += `3. Run 'git reset HEAD~1' in dirty directories to restore working tree.\n`;
+  txtContent += `3. In each dirty repo run the resume command listed below ('git stash pop' on main, 'git reset HEAD~1' on agent branches).\n`;
   txtContent += `4. Start agents using resume commands and prompts below.\n\n`;
   txtContent += `======================================================================\n\n`;
 
@@ -195,7 +223,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
     txtContent += `REPOSITORY: ${repo.name}\n`;
     txtContent += `- Path: ${repo.path}\n`;
     txtContent += `- Branch: ${repo.branch}\n`;
-    txtContent += `- Uncommitted Files: ${repo.uncommittedCount} (${repo.checkpointCreated ? 'Saved to WIP commit' : 'None'})\n`;
+    txtContent += `- Uncommitted Files: ${repo.uncommittedCount} (${repo.checkpointCreated ? `saved as ${repo.checkpointMode}; resume: ${repo.resumeCommand}` : 'None'})\n`;
     txtContent += `- Last Commit: ${repo.lastCommit}\n`;
     
     if (repo.activeSession) {
@@ -208,7 +236,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
       txtContent += `------------------------------------------------------------\n`;
       txtContent += `/goal [FEYNMAN ROUTE] Resume task on branch ${repo.branch}.\n`;
       txtContent += `Objective: Continue working on: "${repo.activeSession.lastPrompt.replace(/\n/g, ' ')}".\n`;
-      let ctx = `Context: First run 'git reset HEAD~1' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
+      let ctx = `Context: First run '${repo.resumeCommand || 'git status'}' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
       if (touched) ctx += ` Touched files: ${touched}.`;
       // Worktree / global protocol note for best thinkers pattern
       if (!/agent\//.test(repo.branch)) {
@@ -368,7 +396,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
         <div class="actions-card">
             <h2>⚡ Quick-Recovery Runbook</h2>
             <ul class="actions-list">
-                <li>Run <code>git reset HEAD~1</code> in dirty repos to undo the WIP commit.</li>
+                <li>Run the resume command shown per repo (<code>git stash pop</code> on main, <code>git reset HEAD~1</code> on agent branches).</li>
                 <li>Launch the agent in the directory using the recovery commands below.</li>
                 <li>Copy the optimized continuation prompt and paste it to resume the session with complete state.</li>
             </ul>
@@ -398,7 +426,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
                             repo.name === 'arcanea-ecosystem' ? 'clarc' :
                             repo.name === 'agentic-creator-os' ? 'clacos' : `cl ${repo.name}`;
       
-      const optPrompt = `/goal [FEYNMAN ROUTE] Resume task on branch ${repo.branch}. \\nObjective: Continue working on: "${repo.activeSession.lastPrompt.replace(/"/g, '&quot;').replace(/\n/g, ' ')}".\\nContext: First run 'git reset HEAD~1' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
+      const optPrompt = `/goal [FEYNMAN ROUTE] Resume task on branch ${repo.branch}. \\nObjective: Continue working on: "${repo.activeSession.lastPrompt.replace(/"/g, '&quot;').replace(/\n/g, ' ')}".\\nContext: First run '${repo.resumeCommand || 'git status'}' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
       
       htmlContent += `
                 <div class="prompt-box">
