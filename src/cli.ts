@@ -70,6 +70,11 @@ function readStringFlag(name: string): string | undefined {
 
 void (async () => {
 switch (command) {
+  case '--mcp':
+  case 'mcp':
+    await import('./integrations/mcp-server/index.js');
+    break;
+
   case 'audit': {
     const audit = runAudit({ cwd: process.cwd() });
     const tracker = new TrendTracker(historyPath);
@@ -257,6 +262,7 @@ switch (command) {
   Peak Performance — System health for AI-powered machines
 
   Commands:
+    pp --mcp                        MCP server over stdio
     pp audit [--json|--md|--plain]   Full system audit
     pp doctor                        Diagnose root causes + action plan
     pp trend [N]                     Show last N score entries
@@ -272,7 +278,6 @@ switch (command) {
 
   Environment:
     NO_COLOR=1                       Disable ANSI color codes
-    PP_CWD=/path                     Override working directory
 
   Preflight workloads:
     ${WORKLOADS.join(', ')}

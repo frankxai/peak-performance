@@ -69,7 +69,8 @@ async function adapterTest() {
     '../../history/tracker.js': { TrendTracker: unused },
     '../../fixes/autofix.js': { runAllFixes: unused },
     '../../format/terminal.js': { formatMaintenanceCompact: unused, formatMarkdown: unused },
-    'node:path': { resolve: require('node:path').resolve },
+    'node:path': { resolve: require('node:path').resolve, isAbsolute: require('node:path').isAbsolute },
+    'node:fs': { statSync: require('node:fs').statSync },
     'node:os': { default: require('node:os') },
   };
   await adapter.link(async name => {

@@ -46,3 +46,12 @@ jobs:
         run: node --experimental-vm-modules scripts/test-preflight-native.cjs
       - name: Compiled CLI and MCP contracts
         run: node --test scripts/test-preflight-compiled.cjs
+      - name: Node 18 compatibility runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '18.20.8'
+          package-manager-cache: false
+      - name: Node 18 emitted tests
+        run: node --test dist/core/preflight.test.js dist/gates/scoring.test.js
+      - name: Node 18 compiled CLI and MCP contracts
+        run: node --test scripts/test-preflight-compiled.cjs

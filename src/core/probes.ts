@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import os from 'node:os';
+import { Buffer } from 'node:buffer';
 
 /** Safe integer parser — never returns NaN */
 function safeInt(s: string): number {
@@ -706,8 +707,12 @@ export function probeGit(cwd: string): GitInfo {
 
   // Repo size — platform-aware
   if (os.platform() === 'win32') {
+    // Pass the entire path as encoded data, including apostrophes/smart quotes.
+    // argv protects the outer process invocation, not PowerShell's script parser.
+    const gitDirectory = Buffer.from(join(cwd, '.git'), 'utf8').toString('base64');
     const sizeOut = runPS(
-      `(Get-ChildItem -Recurse -Force '${cwd}\\.git' -ErrorAction SilentlyContinue | ` +
+      `$gitDirectory = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${gitDirectory}')); ` +
+      `(Get-ChildItem -Recurse -Force -LiteralPath $gitDirectory -ErrorAction SilentlyContinue | ` +
       `Measure-Object -Property Length -Sum).Sum / 1MB`
     );
     info.repoSizeMB = Math.round(safeInt(sizeOut));

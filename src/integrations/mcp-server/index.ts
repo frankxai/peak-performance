@@ -5,9 +5,9 @@
  * Any AI agent with MCP support (Claude, Cursor, Codex, etc.) can use this.
  *
  * Usage:
- *   claude mcp add peak-performance -- npx @arcanea/pp --mcp
+ *   claude mcp add peak-performance -- node /absolute/path/to/dist/cli.js --mcp
  *   OR in .mcp.json:
- *   { "peak-performance": { "command": "npx", "args": ["@arcanea/pp", "--mcp"] } }
+ *   { "peak-performance": { "command": "node", "args": ["/absolute/path/to/dist/cli.js", "--mcp"] } }
  */
 import { runAudit } from '../../core/audit.js';
 import { buildMaintenancePlan } from '../../core/maintenance.js';
@@ -15,7 +15,8 @@ import { buildPreflightPlan, isWorkloadType, WORKLOADS } from '../../core/prefli
 import { TrendTracker } from '../../history/tracker.js';
 import { runAllFixes } from '../../fixes/autofix.js';
 import { formatMaintenanceCompact, formatMarkdown } from '../../format/terminal.js';
-import { resolve } from 'node:path';
+import { resolve, isAbsolute } from 'node:path';
+import { statSync } from 'node:fs';
 
 // MCP stdio protocol (simplified — for full SDK, use @modelcontextprotocol/sdk)
 const respond = (id: string | number | undefined, result: unknown) => {
@@ -23,7 +24,7 @@ const respond = (id: string | number | undefined, result: unknown) => {
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
 };
 
-const respondError = (id: string | number, code: number, message: string) =>
+const respondError = (id: string | number | undefined, code: number, message: string) =>
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } }) + '\n');
 
 const TOOLS = [
@@ -41,7 +42,7 @@ const TOOLS = [
   },
   {
     name: 'pp_preflight',
-    description: 'Return an allow, bounded, or hold decision before CPU/RAM-intensive local work. Read-only; never starts or stops processes.',
+    description: 'Return an allow, bounded, or hold decision before CPU/RAM-intensive local work. Read-only admission probe; never starts workloads or stops running processes.',
     inputSchema: {
       type: 'object',
       required: ['workload'],
@@ -58,13 +59,14 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        count: { type: 'number', default: 10, description: 'Number of entries to show' },
+        count: { type: 'integer', minimum: 1, default: 10, description: 'Number of entries to show' },
       },
     },
   },
   {
     name: 'pp_fix',
-    description: 'Run auto-fixable remediation (clean npm cache, temp files, etc). Returns before/after comparison.',
+    description: 'Permanently delete eligible cache/temp files. Use dryRun: true to inspect first; omitted or false performs remediation. Returns before/after comparison.',
+    annotations: { readOnlyHint: false, destructiveHint: true },
     inputSchema: {
       type: 'object',
       properties: {
@@ -76,19 +78,27 @@ const TOOLS = [
 
 /** Validate and sanitize a cwd path — must be absolute and exist */
 function safeCwd(input: string | undefined): string {
-  if (!input) return process.cwd();
+  if (input === undefined) return process.cwd();
+  if (!isAbsolute(input)) throw new Error('cwd must be absolute.');
   const resolved = resolve(input);
-  // Reject paths with shell metacharacters
-  if (/[`$|;&<>]/.test(resolved)) return process.cwd();
-  try {
-    const { existsSync } = require('node:fs');
-    if (!existsSync(resolved)) return process.cwd();
-  } catch { /* skip */ }
+  if (!statSync(resolved).isDirectory()) throw new Error('cwd must be a directory.');
   return resolved;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toolInputError(id: string | number | undefined, message: string): void {
+  respond(id, { content: [{ type: 'text', text: message }], isError: true });
 }
 
 function handleRequest(method: string, params: Record<string, unknown> | undefined, id: string | number | undefined) {
   switch (method) {
+    case 'ping':
+      respond(id, {});
+      break;
+
     case 'initialize':
       if (id !== undefined) respond(id, {
         protocolVersion: '2024-11-05',
@@ -107,8 +117,39 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
       break;
 
     case 'tools/call': {
-      const toolName = (params as Record<string, unknown>)?.name as string;
-      const args = ((params as Record<string, unknown>)?.arguments || {}) as Record<string, unknown>;
+      if (!params || typeof params.name !== 'string' ||
+          (params.arguments !== undefined && !isRecord(params.arguments))) {
+        respondError(id, -32602, 'Tool call requires a string name and object arguments.');
+        break;
+      }
+      const toolName = params.name;
+      const args = (params.arguments ?? {}) as Record<string, unknown>;
+      if (args.cwd !== undefined && typeof args.cwd !== 'string') {
+        toolInputError(id, 'cwd must be a string when provided.');
+        break;
+      }
+      let cwd: string;
+      try {
+        cwd = safeCwd(args.cwd as string | undefined);
+      } catch {
+        toolInputError(id, 'cwd must name an existing absolute directory.');
+        break;
+      }
+      if (toolName === 'pp_fix' && args.dryRun !== undefined && typeof args.dryRun !== 'boolean') {
+        toolInputError(id, 'dryRun must be a boolean when provided.');
+        break;
+      }
+      if (toolName === 'pp_audit' &&
+          ((args.format !== undefined && !['json', 'markdown', 'compact'].includes(args.format as string)) ||
+           (args.theme !== undefined && !['arcanea', 'plain'].includes(args.theme as string)))) {
+        toolInputError(id, 'format must be json, markdown or compact; theme must be arcanea or plain.');
+        break;
+      }
+      if (toolName === 'pp_trend' && args.count !== undefined &&
+          (typeof args.count !== 'number' || !Number.isSafeInteger(args.count) || args.count < 1)) {
+        toolInputError(id, 'count must be a positive safe integer when provided.');
+        break;
+      }
 
       switch (toolName) {
         case 'pp_preflight': {
@@ -121,7 +162,7 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
             ? undefined
             : typeof args.reserveGB === 'number' ? args.reserveGB * 1_024 : Number.NaN;
           const plan = buildPreflightPlan(workload, {
-            cwd: safeCwd(args.cwd as string),
+            cwd,
             reserveMB,
           });
           respond(id, { content: [{ type: 'text', text: JSON.stringify(plan, null, 2) }] });
@@ -129,8 +170,6 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
         }
 
         case 'pp_audit': {
-          const cwd = safeCwd(args.cwd as string);
-
           let content: string;
           if (args.format === 'compact') {
             content = formatMaintenanceCompact(buildMaintenancePlan(cwd), { color: false });
@@ -200,20 +239,60 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
   }
 }
 
-// STDIO transport
+// Bound partial lines and drain oversized messages to the next delimiter.
+const MAX_MESSAGE_LENGTH = 65_536; // UTF-16 code units
 let buffer = '';
+let discarding = false;
+
+function receiveLine(line: string): void {
+  let msg: unknown;
+  try {
+    msg = JSON.parse(line);
+  } catch {
+    respondError(undefined, -32700, 'Parse error');
+    return;
+  }
+  const rawId = isRecord(msg) ? msg.id : undefined;
+  const id = typeof rawId === 'string' ||
+    (typeof rawId === 'number' && Number.isInteger(rawId)) ? rawId : undefined;
+  if (!isRecord(msg) || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string' ||
+      (msg.params !== undefined && !isRecord(msg.params)) ||
+      (rawId !== undefined && id === undefined)) {
+    respondError(id, -32600, 'Invalid request');
+    return;
+  }
+  // Tool invocations are requests. Never execute one disguised as a notification.
+  if (id === undefined) return;
+  if (msg.method.startsWith('notifications/')) {
+    respondError(id, -32600, 'Notifications must not include a request ID.');
+    return;
+  }
+  try {
+    handleRequest(msg.method, msg.params as Record<string, unknown> | undefined, id);
+  } catch {
+    respondError(id, -32603, 'Internal server error');
+  }
+}
+
 process.stdin.setEncoding('utf-8');
 process.stdin.on('data', (chunk: string) => {
-  buffer += chunk;
-  const lines = buffer.split('\n');
-  buffer = lines.pop() || '';
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    try {
-      const msg = JSON.parse(line);
-      handleRequest(msg.method, msg.params, msg.id);
-    } catch (e: unknown) {
-      process.stderr.write(`Parse error: ${e instanceof Error ? e.message : 'unknown'}\n`);
+  let start = 0;
+  for (;;) {
+    const newline = chunk.indexOf('\n', start);
+    const fragment = chunk.slice(start, newline === -1 ? undefined : newline);
+    if (!discarding) {
+      if (buffer.length + fragment.length > MAX_MESSAGE_LENGTH) {
+        buffer = '';
+        discarding = true;
+        respondError(undefined, -32600, 'Message exceeds 65536 UTF-16 code units.');
+      } else {
+        buffer += fragment;
+      }
     }
+    if (newline === -1) break;
+    if (!discarding && buffer.trim()) receiveLine(buffer);
+    buffer = '';
+    discarding = false;
+    start = newline + 1;
   }
 });

@@ -38,13 +38,17 @@ Every AI coding agent (Claude Code, Cursor, Codex, Windsurf, Devin) spawns proce
 ### CLI (TypeScript)
 
 ```bash
-# Run instantly (no install)
-npx @arcanea/pp audit
-
-# Or install globally
-npm install -g @arcanea/peak-performance
-pp audit
+# Build from a source checkout (Node 24.16.0 and pnpm 11.5.0)
+git clone https://github.com/frankxai/peak-performance
+cd peak-performance
+pnpm install --frozen-lockfile
+pnpm build
+node dist/cli.js audit
 ```
+
+Package metadata names `@arcanea/peak-performance`. npm/npx installation requires
+a published version; anonymous registry reads for this name and `@arcanea/pp`
+returned 404 at 2026-10-01T22:18Z (UTC). The commands above use your local source build.
 
 ### System Tray (Python)
 
@@ -59,19 +63,37 @@ A colored circle appears in your system tray showing your score. Green = healthy
 ### MCP Server (any AI agent)
 
 ```bash
-# Claude Code
-claude mcp add peak-performance -- npx @arcanea/pp --mcp
+# Claude Code, after building the source checkout
+claude mcp add peak-performance -- node /absolute/path/to/peak-performance/dist/cli.js --mcp
 
 # Or in .mcp.json
 {
   "peak-performance": {
-    "command": "npx",
-    "args": ["@arcanea/pp", "--mcp"]
+    "command": "node",
+    "args": ["/absolute/path/to/peak-performance/dist/cli.js", "--mcp"]
   }
 }
 ```
 
 Exposes four tools: `pp_audit`, `pp_preflight`, `pp_trend`, `pp_fix`.
+
+Replace the example path with the absolute path to your built CLI. `pp --mcp`
+and `pp mcp` launch the same stdio adapter. The launcher is checked with emitted
+code; package publication and actual client registration remain release gates.
+Malformed request envelopes and argument containers receive protocol errors;
+invalid `cwd` and `dryRun` types receive tool errors. An explicit `cwd` must be an
+existing absolute directory; it never silently substitutes another directory.
+The Windows Git-size probe encodes paths before using them as PowerShell data.
+Notifications never execute
+tools. Unexpected execution failures return a generic correlated error.
+Messages are limited to 65,536 UTF-16 code units; oversized lines are drained
+through their newline so subsequent requests can still be processed.
+Each stdio message requires a trailing newline. Invalid workload still returns
+the existing protocol error; invalid `cwd` and other tool choices use tool errors.
+Audit history is stored under the server's working directory even with another
+audit target; `pp_fix` and `pp_trend` operate in server scope and do not select
+their target using `cwd`. Destructive annotations are hints, and older clients
+may ignore them; the `pp_fix` description also states its deletion behavior.
 
 ## Source verification
 
@@ -79,6 +101,9 @@ The source checks workflow verifies each candidate head on Linux and Windows wit
 Node 24.16.0 and pnpm 11.5.0: frozen dependencies, source tests, typecheck, build,
 emitted tests, the dependency-free admission fixture, and compiled CLI/MCP tests.
 Matrix jobs run one at a time, including draft pull requests.
+The emitted tests and compiled contracts also run on Node 18.20.8 to check the
+advertised minimum major version. Node 18 is end of life; use Node 24 for new
+source builds. This compatibility check does not certify every Node 18 patch.
 
 Run the compiled contract checks after `pnpm build`:
 
@@ -87,7 +112,9 @@ node --test scripts/test-preflight-compiled.cjs
 ```
 
 These tests use real emitted code and child-process stdio with synthetic machine
-metrics. They verify reserve decisions, CLI exit codes and MCP dispatch. They do
+metrics; audit/remediation are replaced with functions that refuse execution.
+They verify reserve decisions, CLI exit codes, launcher dispatch and malformed
+input recovery. They do
 not certify installed runtime adoption or live machine sensor accuracy.
 
 ## Commands
@@ -170,13 +197,15 @@ The Python tray app (`tray/`) provides always-on monitoring:
 
 ## Auto-Fix
 
-`pp fix` runs safe, reversible repairs:
+`pp fix` can remove cache and temporary files:
 
 - `npm cache clean --force` — frees GB of cached packages
 - Clean temp files older than 3 days
 - More fixes coming (git gc, cache cleanup, and supervised maintenance tasks)
 
 Before/after score comparison is shown automatically.
+Deletion is not reversible. The MCP `pp_fix` tool advertises destructive hints;
+use `dryRun: true` to inspect recommendations before requesting remediation.
 
 `pp fix` does not kill user-owned processes. Use `pp inspect` first, then write a process action receipt before terminating anything ambiguous or user-facing.
 
@@ -322,9 +351,9 @@ Useful for tracking your setup over time or debugging crashes after the fact.
 
 | Platform | CLI | Tray | MCP |
 |----------|-----|------|-----|
-| Windows 11 | Full | Full | Full |
-| macOS | Full (planned) | Partial | Full |
-| Linux | Full (planned) | Partial | Full |
+| Windows 11 | Source checks pass | Available; runtime unverified here | Emitted stdio checks |
+| macOS | Runtime verification pending | Partial | Runtime verification pending |
+| Linux | Source checks pass | Partial | Emitted stdio checks |
 
 Windows is the primary target — that's where AI agent density is highest.
 
