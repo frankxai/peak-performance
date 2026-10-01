@@ -221,9 +221,21 @@ pp preflight --workload swarm
 pp preflight --workload overnight
 ```
 
-The decision is `allow`, `bounded`, or `hold`. PP keeps a 4GB operating-system and application safety floor in addition to the workload reserve. `review-lite` reserves 2GB for one frozen-diff, strict-MCP checker, so useful read-only verification can continue when a full 6GB-reserve swarm is correctly held. `hold` exits with code 2 and is used only for genuine headroom shortfalls, restart posture, or critical conditions affecting heavy/unattended work. Preflight is read-only: it never starts, stops, schedules, or cleans processes.
+The decision is `allow`, `bounded`, or `hold`. RAM-gated work requires a 4GB operating-system and application safety floor in addition to the workload reserve. `review-lite` reserves 2GB for one frozen-diff, strict-MCP checker. `hold` exits with code 2 for headroom shortfalls, invalid reserve/RAM evidence, restart posture, or critical conditions affecting heavy/unattended work. Preflight is read-only: it never starts, stops, schedules, or cleans processes.
 
 The command predicts and routes work; it does not stop processes, restart the machine, mutate cloud services, or launch new agents.
+
+Zero-reserve `interactive` work remains available for normal reading, editing, and small tests under RAM pressure. Its JSON reports `budget.ramGated: false` and `requiredFreeMB: 0`; `safetyFloorMB` remains the policy floor for gated work. Passing a positive `--reserve-gb` requires the reserve plus the 4GB floor for `interactive` and requires an owned workload receipt and cleanup. Repeated flags use the largest reserve, and any invalid value holds. Invalid RAM evidence holds budgeted work. Fractional MB reserves round up. Invalid numeric budget fields serialize as `null`; consumers must honor the `hold` decision and hard blocks.
+
+Reserve flags accept plain decimal GB values. Scientific notation, non-decimal forms, and positive values that underflow to zero hold. A reserve changes the RAM budget only; choose the actual workload for posture, CPU, and timeout rules. Use `review-lite` for an independent checker and `build` for builds.
+
+The admission and MCP dispatch tests were verified without installing dependencies or invoking machine probes on Node 24.16.0:
+
+```bash
+node --experimental-vm-modules scripts/test-preflight-native.cjs
+```
+
+This focused runner uses Node's experimental [TypeScript stripping API](https://nodejs.org/api/module.html#modulestriptypescripttypescode-options), introduced in Node 22.13. Older supported API versions still need verification. It runs the actual admission source and test file with a sensor stub that throws if called. The MCP protocol case loads the actual adapter and admission source with fixture machine readings and isolated fake stdio. Other tool handlers throw if called. It does not typecheck or replace the normal project test/build commands.
 
 ## Overnight Guard
 

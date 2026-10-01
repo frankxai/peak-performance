@@ -117,12 +117,12 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
             if (id !== undefined) respondError(id, -32602, `Invalid workload. Use one of: ${WORKLOADS.join(', ')}`);
             break;
           }
-          const reserveGB = typeof args.reserveGB === 'number' && Number.isFinite(args.reserveGB)
-            ? Math.max(0, args.reserveGB)
-            : undefined;
+          const reserveMB = args.reserveGB === undefined
+            ? undefined
+            : typeof args.reserveGB === 'number' ? args.reserveGB * 1_024 : Number.NaN;
           const plan = buildPreflightPlan(workload, {
             cwd: safeCwd(args.cwd as string),
-            reserveMB: reserveGB === undefined ? undefined : reserveGB * 1_024,
+            reserveMB,
           });
           respond(id, { content: [{ type: 'text', text: JSON.stringify(plan, null, 2) }] });
           break;

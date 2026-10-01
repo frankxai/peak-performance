@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { MaintenancePlan } from './maintenance.js';
-import { evaluatePreflight } from './preflight.js';
+import { evaluatePreflight, readPreflightReserveMB } from './preflight.js';
 
 function maintenance(overrides: Partial<MaintenancePlan['metrics']> = {}, posture: MaintenancePlan['posture'] = 'green'): MaintenancePlan {
   return {
@@ -105,4 +105,106 @@ test('holds unattended work under restart-soon posture', () => {
   const result = evaluatePreflight(maintenance({}, 'restart-soon'), 'overnight');
   assert.equal(result.decision, 'hold');
   assert.match(result.hardBlocks.join(' '), /restart-soon/);
+});
+
+test('keeps zero-reserve interactive reading available below the safety floor', () => {
+  const current = maintenance({ ramFreeMB: 2_419 }, 'maintenance');
+  for (const reserve of [undefined, 0]) {
+    const result = evaluatePreflight(current, 'interactive', reserve);
+    assert.equal(result.decision, 'allow');
+    assert.equal(result.budget.ramGated, false);
+    assert.equal(result.budget.requiredFreeMB, 0);
+    assert.match(result.summary, /RAM admission gate is not applied/);
+  }
+});
+
+test('holds an interactive workload that explicitly reserves RAM below the floor', () => {
+  const result = evaluatePreflight(maintenance({ ramFreeMB: 2_419 }), 'interactive', 512);
+  assert.equal(result.decision, 'hold');
+  assert.equal(result.budget.requiredFreeMB, 4_608);
+  assert.equal(result.budget.ramGated, true);
+  assert.equal(result.requirements.receiptRequired, true);
+  assert.equal(result.requirements.stopAfterWork, true);
+  assert.match(result.hardBlocks.join(' '), /RAM reserve is short/);
+});
+
+test('admits an explicit interactive reserve only at the floor plus reserve boundary', () => {
+  assert.equal(evaluatePreflight(maintenance({ ramFreeMB: 4_607 }), 'interactive', 512).decision, 'hold');
+  assert.equal(evaluatePreflight(maintenance({ ramFreeMB: 4_608 }), 'interactive', 512).decision, 'allow');
+});
+
+test('rounds a positive fractional reserve up and preserves the safety floor', () => {
+  const held = evaluatePreflight(maintenance({ ramFreeMB: 4_096 }), 'interactive', 0.1);
+  assert.equal(held.decision, 'hold');
+  assert.equal(held.budget.workloadReserveMB, 1);
+  assert.equal(evaluatePreflight(maintenance({ ramFreeMB: 4_097 }), 'interactive', 0.1).decision, 'allow');
+});
+
+test('holds invalid reserve inputs instead of admitting them', () => {
+  for (const reserve of [NaN, Infinity, -Infinity, -1]) {
+    const result = evaluatePreflight(maintenance(), 'interactive', reserve);
+    assert.equal(result.decision, 'hold', `reserve ${reserve}`);
+    assert.match(result.hardBlocks.join(' '), /reserve.*finite.*non-negative/i);
+  }
+  assert.equal(evaluatePreflight(maintenance({ ramFreeMB: 100 }), 'build', NaN).decision, 'hold');
+});
+
+test('holds budgeted workloads when RAM evidence is invalid', () => {
+  for (const ramFreeMB of [NaN, Infinity, -Infinity, -1]) {
+    for (const [workload, reserve] of [['build', undefined], ['interactive', 512]] as const) {
+      const result = evaluatePreflight(maintenance({ ramFreeMB }), workload, reserve);
+      assert.equal(result.decision, 'hold', `${workload}, RAM ${ramFreeMB}`);
+      assert.match(result.hardBlocks.join(' '), /RAM.*finite.*non-negative/i);
+    }
+  }
+});
+
+test('parses reserve flags without discarding invalid explicit values', () => {
+  assert.equal(readPreflightReserveMB(['preflight', '--workload', 'interactive']), undefined);
+  assert.equal(readPreflightReserveMB(['--reserve-gb', '0.5']), 512);
+  assert.equal(readPreflightReserveMB(['--reserve-gb=0.5']), 512);
+  assert.equal(readPreflightReserveMB(['--reserve-gb', '0']), 0);
+  for (const args of [
+    ['--reserve-gb'], ['--reserve-gb='], ['--reserve-gb', ' '],
+    ['--reserve-gb', '--json'], ['--reserve-gb=NaN'],
+    ['--reserve-gb=Infinity'], ['--reserve-gb=-1'], ['--reserve-gb=bad'],
+    ['--reserve-gb=0x10'], ['--reserve-gb=0b1'], ['--reserve-gb=1e-400'],
+    ['--reserve-gb=0.' + '0'.repeat(400) + '1'],
+  ]) {
+    const reserve = readPreflightReserveMB(args);
+    assert.notEqual(reserve, undefined, JSON.stringify(args));
+    assert.equal(evaluatePreflight(maintenance(), 'interactive', reserve).decision, 'hold', JSON.stringify(args));
+  }
+});
+
+test('uses the largest repeated reserve and holds if any repeated value is invalid', () => {
+  for (const args of [
+    ['--reserve-gb', '0', '--reserve-gb', '8'],
+    ['--reserve-gb=8', '--reserve-gb=0'],
+    ['--reserve-gb=0', '--reserve-gb', '8'],
+  ]) {
+    const reserve = readPreflightReserveMB(args);
+    assert.equal(reserve, 8_192);
+    assert.equal(evaluatePreflight(maintenance({ ramFreeMB: 7_000 }), 'interactive', reserve).decision, 'hold');
+  }
+  for (const args of [
+    ['--reserve-gb=0', '--reserve-gb=bad'],
+    ['--reserve-gb=bad', '--reserve-gb=8'],
+    ['--reserve-gb=8', '--reserve-gb'],
+  ]) {
+    assert.equal(evaluatePreflight(maintenance(), 'interactive', readPreflightReserveMB(args)).decision, 'hold');
+  }
+});
+
+test('zero-reserve reading stays available with unknown RAM and reserved work holds at zero RAM', () => {
+  assert.equal(evaluatePreflight(maintenance({ ramFreeMB: NaN }), 'interactive').decision, 'allow');
+  assert.equal(evaluatePreflight(maintenance({ ramFreeMB: 0 }), 'interactive', 512).decision, 'hold');
+});
+
+test('non-interactive work enforces the safety floor even with zero reserve', () => {
+  const result = evaluatePreflight(maintenance({ ramFreeMB: 2_419 }), 'build', 0);
+  assert.equal(result.decision, 'hold');
+  assert.equal(result.budget.ramGated, true);
+  assert.equal(result.budget.requiredFreeMB, 4_096);
+  assert.equal(evaluatePreflight(maintenance({ ramFreeMB: 4_096 }), 'build', 0).decision, 'allow');
 });

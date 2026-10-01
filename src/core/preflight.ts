@@ -53,6 +53,7 @@ export interface PreflightPlan {
     crashLoopCount: number;
   };
   budget: {
+    ramGated: boolean;
     workloadReserveMB: number;
     safetyFloorMB: number;
     requiredFreeMB: number;
@@ -161,6 +162,24 @@ export function isWorkloadType(value: string | undefined): value is WorkloadType
   return WORKLOADS.includes(value as WorkloadType);
 }
 
+// Undefined means absent; NaN means explicitly supplied but invalid/missing.
+export function readPreflightReserveMB(args: readonly string[]): number | undefined {
+  let reserveMB: number | undefined;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg !== '--reserve-gb' && !arg.startsWith('--reserve-gb=')) continue;
+    const raw = arg === '--reserve-gb' ? args[index + 1] : arg.slice('--reserve-gb='.length);
+    if (raw === undefined || raw.trim() === '') return Number.NaN;
+    const decimal = raw.trim();
+    if (!/^\+?(?:\d+(?:\.\d*)?|\.\d+)$/.test(decimal)) return Number.NaN;
+    const parsedMB = Number(decimal) * 1_024;
+    if (!Number.isFinite(parsedMB) || parsedMB < 0) return Number.NaN;
+    if (parsedMB === 0 && /[1-9]/.test(decimal)) return Number.NaN;
+    reserveMB = Math.max(reserveMB ?? 0, parsedMB);
+  }
+  return reserveMB;
+}
+
 function postureRequiresHold(posture: MaintenancePosture, workload: WorkloadType): boolean {
   if (posture === 'restart-soon') return workload !== 'interactive';
   return posture === 'maintenance' && ['local-model', 'swarm', 'overnight'].includes(workload);
@@ -176,14 +195,26 @@ export function evaluatePreflight(
   reserveMB?: number,
 ): PreflightPlan {
   const profile = PROFILES[workload];
-  const requestedReserveMB = Math.max(0, Math.round(reserveMB ?? profile.reserveMB));
-  const requiredFreeMB = requestedReserveMB + SAFETY_FLOOR_MB;
+  const reserveValue = reserveMB ?? profile.reserveMB;
+  const reserveIsValid = Number.isFinite(reserveValue) && reserveValue >= 0;
+  // Round up so a positive fractional reserve cannot become the reading exemption.
+  const requestedReserveMB = reserveIsValid ? Math.ceil(reserveValue) : Number.NaN;
+  const requiresRamBudget = workload !== 'interactive' || !reserveIsValid || reserveValue > 0;
+  const requiredFreeMB = requiresRamBudget ? requestedReserveMB + SAFETY_FLOOR_MB : 0;
   const projectedFreeMB = maintenance.metrics.ramFreeMB - requestedReserveMB;
   const hardBlocks: string[] = [];
   const constraints: string[] = [];
   const actions: string[] = [];
 
-  if (workload !== 'interactive' && maintenance.metrics.ramFreeMB < requiredFreeMB) {
+  const ramIsValid = Number.isFinite(maintenance.metrics.ramFreeMB) && maintenance.metrics.ramFreeMB >= 0;
+
+  if (!reserveIsValid) {
+    addUnique(hardBlocks, 'Workload reserve must be a finite, non-negative number of MB.');
+  }
+  if (requiresRamBudget && !ramIsValid) {
+    addUnique(hardBlocks, 'RAM evidence must be a finite, non-negative number of MB; rerun the machine probe.');
+  }
+  if (reserveIsValid && requiresRamBudget && ramIsValid && maintenance.metrics.ramFreeMB < requiredFreeMB) {
     addUnique(hardBlocks, `RAM reserve is short: ${maintenance.metrics.ramFreeMB}MB free, ${requiredFreeMB}MB required.`);
     addUnique(actions, 'Archive inactive agent tasks and stop completed SDS-owned servers, then rerun preflight.');
   }
@@ -243,7 +274,9 @@ export function evaluatePreflight(
 
   const decision: PreflightDecision = hardBlocks.length > 0 ? 'hold' : constraints.length > 0 ? 'bounded' : 'allow';
   const summary = decision === 'allow'
-    ? `${workload} workload is admitted within the current machine budget.`
+    ? requiresRamBudget
+      ? `${workload} workload is admitted within the current machine budget.`
+      : 'Ordinary zero-reserve interactive work is admitted; the RAM admission gate is not applied.'
     : decision === 'bounded'
       ? `${workload} workload may run once with the listed limits and cleanup requirements.`
       : `${workload} workload is held until the blocking conditions are resolved.`;
@@ -269,6 +302,7 @@ export function evaluatePreflight(
       crashLoopCount: maintenance.metrics.crashLoopCount,
     },
     budget: {
+      ramGated: requiresRamBudget,
       workloadReserveMB: requestedReserveMB,
       safetyFloorMB: SAFETY_FLOOR_MB,
       requiredFreeMB,
@@ -281,8 +315,8 @@ export function evaluatePreflight(
     requirements: {
       sdsRequired: profile.requiresSds,
       cloudPreferred: profile.cloudPreferred,
-      receiptRequired: workload !== 'interactive',
-      stopAfterWork: workload !== 'interactive',
+      receiptRequired: requiresRamBudget,
+      stopAfterWork: requiresRamBudget,
       explicitModelReserveRecommended: workload === 'local-model',
       strictMcpRecommended: workload === 'review-lite',
     },

@@ -25,7 +25,7 @@ import { runPrepHandover } from './core/handover.js';
 import { probeProcesses } from './core/probes.js';
 import { runProcessWatch } from './core/process-ledger.js';
 import { buildMaintenancePlan } from './core/maintenance.js';
-import { buildPreflightPlan, isWorkloadType, WORKLOADS } from './core/preflight.js';
+import { buildPreflightPlan, isWorkloadType, readPreflightReserveMB, WORKLOADS } from './core/preflight.js';
 import { buildOvernightGuardPlan, formatOvernightGuardMarkdown, writeOvernightGuardPlan } from './core/overnight.js';
 import { formatAudit, formatTrend, formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan, formatPreflightPlan } from './format/terminal.js';
 import { resolve } from 'node:path';
@@ -199,10 +199,9 @@ switch (command) {
     if (!isWorkloadType(workloadValue)) {
       throw new Error(`Unknown workload "${workloadValue}". Use one of: ${WORKLOADS.join(', ')}.`);
     }
-    const reserveGB = readNumberFlag('reserve-gb', Number.NaN);
     const plan = buildPreflightPlan(workloadValue, {
       cwd: process.cwd(),
-      reserveMB: Number.isFinite(reserveGB) ? reserveGB * 1_024 : undefined,
+      reserveMB: readPreflightReserveMB(args),
     });
     if (flags.has('--json')) console.log(JSON.stringify(plan, null, 2));
     else console.log(formatPreflightPlan(plan));
