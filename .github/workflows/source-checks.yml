@@ -1,0 +1,48 @@
+name: Source checks
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'agent/codex/pp-reserve-floor-20261001']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  project:
+    name: Project (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.16.0'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: '11.5.0'
+          run_install: false
+      - name: Frozen dependency install
+        run: pnpm install --frozen-lockfile
+      - name: Source tests
+        run: pnpm test
+      - name: Typecheck
+        run: pnpm lint
+      - name: Build
+        run: pnpm build
+      - name: Emitted tests
+        run: node --test dist/core/preflight.test.js dist/gates/scoring.test.js
+      - name: Dependency-free admission fixture
+        run: node --experimental-vm-modules scripts/test-preflight-native.cjs
+      - name: Compiled CLI and MCP contracts
+        run: node --test scripts/test-preflight-compiled.cjs

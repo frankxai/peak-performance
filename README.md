@@ -73,6 +73,23 @@ claude mcp add peak-performance -- npx @arcanea/pp --mcp
 
 Exposes three tools: `pp_audit`, `pp_trend`, `pp_fix`.
 
+## Source verification
+
+The source checks workflow verifies each candidate head on Linux and Windows with
+Node 24.16.0 and pnpm 11.5.0: frozen dependencies, source tests, typecheck, build,
+emitted tests, the dependency-free admission fixture, and compiled CLI/MCP tests.
+Matrix jobs run one at a time, including draft pull requests.
+
+Run the compiled contract checks after `pnpm build`:
+
+```bash
+node --test scripts/test-preflight-compiled.cjs
+```
+
+These tests use real emitted code and child-process stdio with synthetic machine
+metrics. They verify reserve decisions, CLI exit codes and MCP dispatch. They do
+not certify installed runtime adoption or live machine sensor accuracy.
+
 ## Commands
 
 | Command | Description |
