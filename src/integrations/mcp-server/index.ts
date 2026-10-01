@@ -196,7 +196,7 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
     }
 
     default:
-      if (id) respondError(id, -32601, `Unknown method: ${method}`);
+      if (id !== undefined) respondError(id, -32601, `Unknown method: ${method}`);
   }
 }
 

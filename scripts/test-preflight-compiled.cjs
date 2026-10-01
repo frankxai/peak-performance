@@ -96,3 +96,17 @@ test('compiled MCP: initialization, listing, admission and invalid requests over
   assert.equal(responses[7].error.code, -32602);
   assert.equal(responses[8].error.code, -32601);
 });
+
+test('compiled MCP: unknown method responds to ID zero and ignores notifications', () => {
+  const messages = [
+    { jsonrpc: '2.0', id: 0, method: 'unknown' },
+    { jsonrpc: '2.0', method: 'unknown' },
+  ];
+  const result = run('dist/integrations/mcp-server/index.js', [], messages.map(x => JSON.stringify(x)).join('\n') + '\n');
+  assert.equal(result.status, 0);
+  const responses = result.stdout.trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(responses.length, 1);
+  assert.equal(responses[0].jsonrpc, '2.0');
+  assert.equal(responses[0].id, 0);
+  assert.equal(responses[0].error.code, -32601);
+});

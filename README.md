@@ -71,7 +71,7 @@ claude mcp add peak-performance -- npx @arcanea/pp --mcp
 }
 ```
 
-Exposes three tools: `pp_audit`, `pp_trend`, `pp_fix`.
+Exposes four tools: `pp_audit`, `pp_preflight`, `pp_trend`, `pp_fix`.
 
 ## Source verification
 
@@ -362,8 +362,8 @@ git clone https://github.com/frankxai/peak-performance
 cd peak-performance
 
 # TypeScript CLI
-npm install
-npx tsx src/cli.ts audit
+pnpm install --frozen-lockfile
+pnpm pp audit
 
 # Python tray
 cd tray
