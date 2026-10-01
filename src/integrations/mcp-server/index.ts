@@ -36,7 +36,7 @@ const TOOLS = [
       properties: {
         format: { type: 'string', enum: ['json', 'markdown', 'compact'], default: 'markdown' },
         theme: { type: 'string', enum: ['arcanea', 'plain'], default: 'arcanea' },
-        cwd: { type: 'string', description: 'Working directory to audit (default: current)' },
+        cwd: { type: 'string', description: 'Existing fully qualified directory (default: current). UNC/device, Windows root-relative and POSIX double-slash paths are unsupported; the server directory must also be supported.' },
       },
     },
   },
@@ -49,7 +49,7 @@ const TOOLS = [
       properties: {
         workload: { type: 'string', enum: WORKLOADS },
         reserveGB: { type: 'number', minimum: 0, description: 'Optional explicit workload peak reserve, especially for local models.' },
-        cwd: { type: 'string', description: 'Working directory to audit (default: current)' },
+        cwd: { type: 'string', description: 'Existing fully qualified directory (default: current). UNC/device, Windows root-relative and POSIX double-slash paths are unsupported; the server directory must also be supported.' },
       },
     },
   },
@@ -76,13 +76,27 @@ const TOOLS = [
   },
 ];
 
-/** Validate and sanitize a cwd path — must be absolute and exist */
+/** Reject ambiguous/network namespace spellings before filesystem access.
+ * This is a spelling gate, not a sandbox for mapped drives, mounts or junctions.
+ */
+function supportedCwd(target: string): string {
+  if (!isAbsolute(target) ||
+      (process.platform === 'win32' ? !/^[A-Za-z]:[\\/]/.test(target) : target.startsWith('//'))) {
+    throw new Error('cwd must use a fully qualified supported path.');
+  }
+  return resolve(target);
+}
+
 function safeCwd(input: string | undefined): string {
-  if (input === undefined) return process.cwd();
-  if (!isAbsolute(input)) throw new Error('cwd must be absolute.');
-  const resolved = resolve(input);
-  if (!statSync(resolved).isDirectory()) throw new Error('cwd must be a directory.');
-  return resolved;
+  // Server-scoped history, trend and remediation must not bypass the spelling
+  // gate through an explicit target. Validate both spellings before either stat.
+  const server = supportedCwd(process.cwd());
+  const target = input === undefined ? server : supportedCwd(input);
+  if (!statSync(server).isDirectory() ||
+      (target !== server && !statSync(target).isDirectory())) {
+    throw new Error('cwd must be a directory.');
+  }
+  return target;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -132,7 +146,7 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
       try {
         cwd = safeCwd(args.cwd as string | undefined);
       } catch {
-        toolInputError(id, 'cwd must name an existing absolute directory.');
+        toolInputError(id, 'Server and target cwd must name an existing absolute directory using a supported fully qualified path; UNC/device, Windows root-relative and POSIX double-slash paths are unsupported.');
         break;
       }
       if (toolName === 'pp_fix' && args.dryRun !== undefined && typeof args.dryRun !== 'boolean') {

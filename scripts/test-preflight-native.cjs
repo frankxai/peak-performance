@@ -52,7 +52,8 @@ async function adapterTest() {
     },
   };
   const context = createContext({ process: {
-    cwd: () => 'C:/fixture',
+    cwd: () => __dirname,
+    platform: process.platform,
     stdout: { write: line => responses.push(JSON.parse(line)) },
     stderr: { write: line => { throw new Error(line); } },
     stdin: { setEncoding() {}, on(event, listener) {

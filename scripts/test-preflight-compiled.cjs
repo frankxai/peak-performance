@@ -9,6 +9,67 @@ const { join, resolve } = require('node:path');
 
 const root = resolve(__dirname, '..');
 
+// Exercise the emitted adapter and host-native path implementation with all
+// filesystem checks intercepted. Never contact a share or run machine probes.
+function rejectedPathFixture(defaultCwd, inputs, names = inputs.map(() => 'pp_preflight')) {
+  const adapter = join(root, 'dist/integrations/mcp-server/index.js');
+  const script = `
+    const fs = require('node:fs');
+    const maintenance = require(${JSON.stringify(join(root, 'dist/core/maintenance.js'))});
+    let dispatches = 0;
+    const deny = () => { dispatches++; throw new Error('Fixture denies machine operations'); };
+    maintenance.buildMaintenancePlan = deny;
+    require(${JSON.stringify(join(root, 'dist/core/audit.js'))}).runAudit = deny;
+    require(${JSON.stringify(join(root, 'dist/fixes/autofix.js'))}).runAllFixes = deny;
+    require(${JSON.stringify(join(root, 'dist/history/tracker.js'))}).TrendTracker = function () { deny(); };
+    require(${JSON.stringify(join(root, 'dist/core/preflight.js'))});
+    const stats = [];
+    fs.statSync = path => { stats.push(String(path)); return { isDirectory: () => true }; };
+    process.cwd = () => ${JSON.stringify(defaultCwd)};
+    process.stdin.on('end', () => process.stdout.write(JSON.stringify({ fixtureStats: stats, fixtureDispatches: dispatches }) + '\\n'));
+    require(${JSON.stringify(adapter)});
+  `;
+  const messages = inputs.flatMap((cwd, index) => [
+    call(index, names[index], cwd === undefined ? { workload: 'interactive' } : { workload: 'interactive', cwd }),
+    list('recover-' + index),
+  ]);
+  const result = spawnSync(process.execPath, ['-e', script], {
+    input: messages.map(x => JSON.stringify(x)).join('\n') + '\n',
+    encoding: 'utf8', timeout: 10000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.signal, null);
+  assert.equal(result.status, 0);
+  assert.equal(result.stderr, '');
+  const responses = result.stdout.trim().split('\n').map(line => JSON.parse(line));
+  const metadata = responses.pop();
+  assert.deepEqual(metadata, { fixtureStats: [], fixtureDispatches: 0 }, 'Unsupported paths must be rejected before filesystem checks or dispatch');
+  assert.equal(responses.length, inputs.length * 2);
+  inputs.forEach((_, index) => {
+    assert.equal(responses[index * 2].id, index);
+    assert.equal(responses[index * 2].result.isError, true);
+    assert.equal(responses[index * 2 + 1].id, 'recover-' + index);
+    assert.ok(responses[index * 2 + 1].result.tools.length);
+  });
+}
+
+test('compiled MCP rejects network/device/ambiguous explicit paths before any filesystem check', () => {
+  const unsafe = process.platform === 'win32'
+    ? ['\\\\fixture.invalid\\share', '//fixture.invalid/share', '\\/fixture.invalid/share', '/\\fixture.invalid/share', '\\\\?\\C:\\fixture', '\\\\.\\C:\\fixture', '\\??\\C:\\fixture', '\\fixture', '/fixture', 'C:fixture']
+    : ['//fixture.invalid/share', '///fixture', 'relative'];
+  rejectedPathFixture(root, unsafe);
+});
+
+for (const cwd of ['//fixture.invalid/share', '\\\\fixture.invalid\\share', '\\\\?\\C:\\fixture']) {
+  test(`compiled MCP checks inherited cwd before filesystem access: ${cwd}`, () => {
+    rejectedPathFixture(cwd, [undefined]);
+  });
+}
+
+test('compiled MCP cannot bypass the server-directory gate through a valid explicit target for any tool', () => {
+  rejectedPathFixture('//fixture.invalid/share', [root, root, root, root], ['pp_audit', 'pp_preflight', 'pp_trend', 'pp_fix']);
+});
+
 function run(entry, args = [], input, freeMB = 2419, sensorFailure = false) {
   const directory = mkdtempSync(join(tmpdir(), 'pp-compiled-test-'));
   const preload = join(directory, 'sensors.cjs');

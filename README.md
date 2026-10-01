@@ -82,17 +82,31 @@ and `pp mcp` launch the same stdio adapter. The launcher is checked with emitted
 code; package publication and actual client registration remain release gates.
 Malformed request envelopes and argument containers receive protocol errors;
 invalid `cwd` and `dryRun` types receive tool errors. An explicit `cwd` must be an
-existing absolute directory; it never silently substitutes another directory.
+existing fully qualified directory, including when using the server's default
+directory. Every tool call validates both the server directory and any explicit
+target before checking either on disk; an explicit target cannot bypass an
+unsupported server directory, which disables all four tools. Windows requires a
+drive letter followed by a slash or backslash;
+UNC shares, device/extended namespaces and paths relative to the current drive's
+root are rejected before filesystem access. POSIX paths beginning with two or
+more slashes are also rejected before normalization. It never silently substitutes
+another directory. This spelling check is not a filesystem sandbox: mapped drives,
+network mounts and junctions can still redirect an otherwise accepted path.
+Use a trusted local server directory and audit target; resolving those filesystem
+and permission boundaries remains a gate before actual client adoption.
 The Windows Git-size probe encodes paths before using them as PowerShell data.
 Notifications never execute
 tools. Unexpected execution failures return a generic correlated error.
 Messages are limited to 65,536 UTF-16 code units; oversized lines are drained
 through their newline so subsequent requests can still be processed.
 Each stdio message requires a trailing newline. Invalid workload still returns
-the existing protocol error; invalid `cwd` and other tool choices use tool errors.
+the existing protocol error after directory validation succeeds; an unsupported
+server or target directory is rejected first. Invalid `cwd` and other tool choices
+use tool errors.
 Audit history is stored under the server's working directory even with another
 audit target; `pp_fix` and `pp_trend` operate in server scope and do not select
-their target using `cwd`. Destructive annotations are hints, and older clients
+their target using `cwd`, although any supplied `cwd` must still pass validation.
+Destructive annotations are hints, and older clients
 may ignore them; the `pp_fix` description also states its deletion behavior.
 
 ## Source verification
