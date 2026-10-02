@@ -2,10 +2,10 @@
     "name":  "peak-performance",
     "classification":  "tooling",
     "owner":  "FrankX AI",
-    "updated":  "2026-06-19",
+    "updated":  "2026-10-02",
     "remote":  "https://github.com/frankxai/peak-performance.git",
     "health":  {
-                   "primaryCheck":  "npm run build",
+                   "primaryCheck":  "pnpm run build",
                    "manualChecks":  [
                                         "Review AGENTS.md before edits",
                                         "Preserve user work and dirty files",

@@ -4,10 +4,14 @@ This repo is part of the FrankX / Starlight / Arcanea agent estate.
 
 ## Classification
 
-- Repo: $title
-- Class: $Classification
-- Default health command: $HealthCommand
-- Remote: $Remote
+- Repo: peak-performance
+- Class: tooling
+- Default health command: pnpm run build
+- Remote: https://github.com/frankxai/peak-performance.git
+
+Builds and dependency installs follow the applicable workspace resource admission.
+The source checks workflow runs tests, typecheck, build and compiled CLI/MCP
+contracts. A build alone does not establish installed runtime or client acceptance.
 
 ## Agent Rules
 
