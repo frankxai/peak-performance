@@ -20,6 +20,12 @@ export interface MaintenanceAction {
 }
 
 export interface MaintenancePlan {
+  probeEvidence?: {
+    sampledAt: string;
+    cpu: 'measured' | 'unknown';
+    processes: 'measured' | 'unknown';
+    crashes: 'measured' | 'unknown' | 'unsupported';
+  };
   timestamp: string;
   hostname: string;
   posture: MaintenancePosture;
@@ -97,9 +103,12 @@ function addAction(actions: MaintenanceAction[], action: MaintenanceAction): voi
 }
 
 export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
+  const sampledAt = new Date().toISOString();
   const execution = runAuditWithProbes({ cwd });
   const audit: AuditResult = execution.audit;
   const { mem, disk, uptime, procs, cpu, crashes } = execution.snapshot;
+  const probeEvidence: NonNullable<MaintenancePlan['probeEvidence']> = { sampledAt, cpu: cpu.status ?? 'unknown', processes: procs.status ?? 'unknown', crashes: crashes.status ?? 'unknown' };
+  const unknownProbes = (['cpu', 'processes', 'crashes'] as const).filter(key => probeEvidence[key] !== 'measured');
   const namedAgentCount = procs.claudeCount + procs.cursorCount + procs.codexCount;
   const aiProcessCount = roleCount(procs, 'ai-agent');
   const localModelCount = roleCount(procs, 'local-model');
@@ -109,6 +118,7 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
   const reviewableCount = procs.processes.filter(proc => !proc.protected).length;
 
   const reasons: string[] = [];
+  if (unknownProbes.length) reasons.push(`Headroom is unknown for ${unknownProbes.join(', ')}; failed, partial or unsupported probes do not establish clear capacity.`);
   if (mem.usedPct >= 88) reasons.push(`RAM is high at ${mem.usedPct}% used (${mem.freeMB}MB free).`);
   else if (mem.usedPct >= 82) reasons.push(`RAM is elevated at ${mem.usedPct}% used; avoid launching large swarms until pressure drops.`);
   else reasons.push(`RAM is workable at ${mem.usedPct}% used (${mem.freeMB}MB free).`);
@@ -157,7 +167,8 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
     crashLoopCount: crashes.topAppCrashes,
   };
 
-  const posture = choosePosture({ metrics, reasons });
+  const observedPosture = choosePosture({ metrics, reasons });
+  const posture = unknownProbes.length && ['green', 'watch'].includes(observedPosture) ? 'constrain' : observedPosture;
   const swarmPosture = swarmPostureFor(posture);
   const actions: MaintenanceAction[] = [];
 
@@ -270,6 +281,7 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
   const summary = `${posture} maintenance posture; ${swarmPosture} swarm posture; score ${audit.totalScore}/${audit.grade}.`;
 
   return {
+    probeEvidence,
     timestamp: new Date().toISOString(),
     hostname: os.hostname(),
     posture,

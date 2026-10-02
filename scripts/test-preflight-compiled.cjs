@@ -70,7 +70,7 @@ test('compiled MCP cannot bypass the server-directory gate through a valid expli
   rejectedPathFixture('//fixture.invalid/share', [root, root, root, root], ['pp_audit', 'pp_preflight', 'pp_trend', 'pp_fix']);
 });
 
-function run(entry, args = [], input, freeMB = 2419, sensorFailure = false) {
+function run(entry, args = [], input, freeMB = 2419, sensorFailure = false, freePct = 20, evidenceStatus = 'measured') {
   const directory = mkdtempSync(join(tmpdir(), 'pp-compiled-test-'));
   const preload = join(directory, 'sensors.cjs');
   try {
@@ -80,10 +80,12 @@ function run(entry, args = [], input, freeMB = 2419, sensorFailure = false) {
       const deny = () => { throw new Error('Fixture refuses audit or remediation'); };
       require(${JSON.stringify(join(root, 'dist/core/audit.js'))}).runAudit = deny;
       require(${JSON.stringify(join(root, 'dist/fixes/autofix.js'))}).runAllFixes = deny;
+      require(${JSON.stringify(join(root, 'dist/core/storage.js'))}).probeStorage = () => ({ sampledAt: new Date().toISOString(), readings: ['system', 'target', 'temp'].map(scope => ({ scope, status: 'measured', totalBytes: '1000000', availableBytes: String(${freePct} * 10000) })) });
       maintenance.buildMaintenancePlan = () => {
         if (${JSON.stringify(sensorFailure)}) throw new Error('Fixture sensor failure');
         return ({
         hostname: 'fixture', posture: 'green', swarmPosture: 'expand',
+        probeEvidence: { sampledAt: new Date().toISOString(), cpu: ${JSON.stringify(evidenceStatus)}, processes: ${JSON.stringify(evidenceStatus)}, crashes: ${JSON.stringify(evidenceStatus)} },
         metrics: {
           ramFreeMB: ${freeMB}, ramUsedPct: 50, cpuLoadPct: 20, cpuSystemLoadPct: 5,
           codexTaskRuntimeCount: 0, mcpMemoryMB: 0, localModelCount: 0,
@@ -115,6 +117,31 @@ const cliCases = [
   { name: 'repeated CLI zero cannot erase positive reserve', reserve: ['--reserve-gb', '0.5', '--reserve-gb', '0'], decision: 'hold', code: 2, required: 4608 },
   { name: 'build zero still requires safety floor', workload: 'build', reserve: ['--reserve-gb', '0'], decision: 'hold', code: 2, required: 4096 },
 ];
+
+for (const free of [3, 5, 10, 15]) for (const workload of ['build', 'local-model', 'swarm', 'overnight']) {
+  test(`compiled storage floor: ${free}% ${workload}`, () => {
+    const result = run('dist/cli.js', ['preflight', '--workload', workload, '--reserve-gb', '12', '--json'], undefined, 40000, false, free);
+    const plan = JSON.parse(result.stdout);
+    const expected = free < 8 || free < 15 && workload !== 'build' ? 'hold' : free < 15 ? 'bounded' : 'allow';
+    assert.equal(plan.decision, expected);
+    assert.equal(result.status, expected === 'hold' ? 2 : 0);
+  });
+}
+
+test('compiled CLI does not admit unknown machine evidence', () => {
+  const result = run('dist/cli.js', ['preflight', '--workload', 'build', '--json'], undefined, 40000, false, 20, 'unknown');
+  assert.equal(result.status, 2);
+  assert.equal(JSON.parse(result.stdout).decision, 'hold');
+});
+
+for (const free of [3, 5, 10, 15]) test(`compiled MCP storage decision and error flag: ${free}%`, () => {
+  const input = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'pp_preflight', arguments: { workload: 'build', reserveGB: 12 } } }) + '\n';
+  const result = run('dist/integrations/mcp-server/index.js', [], input, 40000, false, free);
+  assert.equal(result.status, 0);
+  const response = JSON.parse(result.stdout);
+  assert.equal(response.result.isError, free < 8);
+  assert.equal(JSON.parse(response.result.content[0].text).decision, free < 8 ? 'hold' : free < 15 ? 'bounded' : 'allow');
+});
 
 for (const c of cliCases) test(`compiled CLI: ${c.name}`, () => {
   const result = run('dist/cli.js', ['preflight', '--workload', c.workload || 'interactive', ...c.reserve, '--json'], undefined, c.freeMB);

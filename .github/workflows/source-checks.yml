@@ -41,7 +41,7 @@ jobs:
       - name: Build
         run: pnpm build
       - name: Emitted tests
-        run: node --test dist/core/preflight.test.js dist/gates/scoring.test.js
+        run: node --test dist/core/preflight.test.js dist/core/storage.test.js dist/core/probes.test.js dist/gates/scoring.test.js
       - name: Dependency-free admission fixture
         run: node --experimental-vm-modules scripts/test-preflight-native.cjs
       - name: Compiled CLI and MCP contracts
@@ -52,6 +52,6 @@ jobs:
           node-version: '18.20.8'
           package-manager-cache: false
       - name: Node 18 emitted tests
-        run: node --test dist/core/preflight.test.js dist/gates/scoring.test.js
+        run: node --test dist/core/preflight.test.js dist/core/storage.test.js dist/core/probes.test.js dist/gates/scoring.test.js
       - name: Node 18 compiled CLI and MCP contracts
         run: node --test scripts/test-preflight-compiled.cjs

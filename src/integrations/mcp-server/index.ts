@@ -179,7 +179,7 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
             cwd,
             reserveMB,
           });
-          respond(id, { content: [{ type: 'text', text: JSON.stringify(plan, null, 2) }] });
+          respond(id, { content: [{ type: 'text', text: JSON.stringify(plan, null, 2) }], isError: plan.decision === 'hold' });
           break;
         }
 

@@ -25,6 +25,7 @@ function source(relative, context) {
 
 const preflight = source('src/core/preflight.ts');
 const tests = source('src/core/preflight.test.ts');
+const storage = source('src/core/storage.ts');
 const sensors = new SyntheticModule(['buildMaintenancePlan'], function () {
   this.setExport('buildMaintenancePlan', () => {
     throw new Error('Pure admission tests must not invoke machine sensors.');
@@ -33,6 +34,8 @@ const sensors = new SyntheticModule(['buildMaintenancePlan'], function () {
 
 async function link(name) {
   if (name === './preflight.js') return preflight;
+  if (name === './storage.js') return storage;
+  if (name === 'node:child_process') return new SyntheticModule(['execFileSync'], function () { this.setExport('execFileSync', () => { throw new Error('Pure fixture denies storage probes'); }); });
   if (name === './maintenance.js') return sensors;
   if (['node:os', 'node:assert/strict', 'node:test'].includes(name)) return builtin(name);
   throw new Error(`Unexpected admission-test import: ${name}`);
@@ -43,7 +46,9 @@ async function adapterTest() {
   const test = require('node:test');
   const responses = [];
   let receive;
+  const storageFixture = { sampledAt: new Date().toISOString(), readings: ['system', 'target', 'temp'].map(scope => ({ scope, status: 'measured', totalBytes: '100', availableBytes: '20' })) };
   const fixture = {
+    probeEvidence: { sampledAt: new Date().toISOString(), cpu: 'measured', processes: 'measured', crashes: 'measured' },
     hostname: 'fixture', posture: 'green', swarmPosture: 'expand',
     metrics: {
       ramFreeMB: 2_419, ramUsedPct: 50, cpuLoadPct: 20, cpuSystemLoadPct: 5,
@@ -66,6 +71,7 @@ async function adapterTest() {
   const exportsByImport = {
     '../../core/maintenance.js': { buildMaintenancePlan: () => fixture },
     './maintenance.js': { buildMaintenancePlan: () => fixture },
+    './storage.js': { ...storage.namespace, probeStorage: () => storageFixture },
     '../../core/audit.js': { runAudit: unused },
     '../../history/tracker.js': { TrendTracker: unused },
     '../../fixes/autofix.js': { runAllFixes: unused },
@@ -90,7 +96,9 @@ async function adapterTest() {
         params: { name: 'pp_preflight', arguments: args } }) + '\n');
       assert.equal(responses.length, id);
       assert.equal(responses.at(-1).id, id);
-      return JSON.parse(responses.at(-1).result.content[0].text);
+      const plan = JSON.parse(responses.at(-1).result.content[0].text);
+      assert.equal(responses.at(-1).result.isError, plan.decision === 'hold');
+      return plan;
     }
     for (const reserveGB of [-1, 'bad', null, 0.5]) {
       assert.equal(request({ workload: 'interactive', reserveGB }).decision, 'hold', String(reserveGB));
@@ -103,7 +111,36 @@ async function adapterTest() {
   });
 }
 
-tests.link(link).then(() => tests.evaluate()).then(adapterTest).catch(error => {
+async function maintenanceEvidenceTest() {
+  const assert = require('node:assert/strict');
+  const test = require('node:test');
+  const snapshot = {
+    mem: { freeMB: 18000, usedPct: 45 }, disk: { freeGB: 200 }, uptime: { uptimeHours: 12 },
+    cpu: { status: 'measured', loadPct: 20, systemLoadPct: 5 },
+    crashes: { status: 'measured', topApp: '', topAppCrashes: 0, totalCrashes: 0, windowMinutes: 15 },
+    procs: { status: 'measured', processes: [], totalProcesses: 100, nodeCount: 0, claudeCount: 0, cursorCount: 0, codexCount: 0, codexTaskRuntimeCount: 0, mcpCount: 0, mcpProcessCount: 0, mcpMemoryMB: 0, duplicateMcpProcesses: 0, agentTreeMemoryMB: 0 },
+  };
+  const maintenance = source('src/core/maintenance.ts');
+  await maintenance.link(async name => {
+    if (name === 'node:os') return builtin(name);
+    if (name === './audit.js') return new SyntheticModule(['runAuditWithProbes'], function () { this.setExport('runAuditWithProbes', () => ({ audit: { totalScore: 90, grade: 'A' }, snapshot })); });
+    throw new Error('Unexpected maintenance fixture import: ' + name);
+  });
+  await maintenance.evaluate();
+  test('actual maintenance cannot advertise expansion with unknown probe capacity', () => {
+    assert.equal(maintenance.namespace.buildMaintenancePlan().swarmPosture, 'expand');
+    for (const key of ['cpu', 'crashes', 'procs']) {
+      snapshot[key].status = 'unknown';
+      const plan = maintenance.namespace.buildMaintenancePlan();
+      assert.equal(plan.posture, 'constrain', key);
+      assert.equal(plan.swarmPosture, 'pause-new-swarms', key);
+      assert.match(plan.reasons.join(' '), /Headroom is unknown/);
+      snapshot[key].status = 'measured';
+    }
+  });
+}
+
+tests.link(link).then(() => tests.evaluate()).then(adapterTest).then(maintenanceEvidenceTest).catch(error => {
   console.error(error);
   process.exitCode = 1;
 });

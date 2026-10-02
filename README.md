@@ -1,5 +1,36 @@
 # Peak Performance
 
+## Preflight storage and evidence
+
+Preflight checks available bytes on the system, working-directory and temporary
+filesystems. The strictest volume applies: below 4% is freeze with operator
+escalation; below 8% holds disk growth; 8–15% permits one interactive build with
+cleanup and reports explicit prohibitions on installs, worktree additions, build fanout, media/model
+and unattended work. At least 15% follows the other resource budgets. Thresholds
+use exact bytes, without rounding a displayed percentage.
+
+Budgeted work requires fresh, measured CPU, process and crash evidence. Failed
+or partial probes hold admission. Windows crashes use structured event data;
+POSIX crash collection is currently unsupported and therefore holds budgeted
+work. Missing command lines for agent-capable runtimes also hold admission,
+including access denied for elevated or other-session processes; incomplete
+visibility cannot establish capacity. Maintenance reports constrain/pause for
+unknown probes instead of advertising expansion. Zero-reserve interactive reading remains available above freeze. An
+interactive or review-lite label never grants disk growth. Select the actual
+workload and recheck storage before every growing step; preflight is a snapshot,
+not a reservation or ongoing supervisor.
+
+Filesystem reads run in a bounded child. Windows network/device paths and mapped
+network drives are rejected; mount resolution is checked before statfs. This
+does not establish a sandbox against path races or POSIX remote mounts. The
+existing full audit remains in the preflight path, and its latency, process
+classification coverage, tray parity, irreversible cleanup and installed
+client acceptance still need separate verification before main integration.
+
+The storage API is documented in [Node 18 fs.statfsSync](https://nodejs.org/docs/latest-v18.x/api/fs.html#fsstatfssyncpath-options).
+Subprocess bounds follow [Node child_process](https://nodejs.org/docs/latest-v18.x/api/child_process.html#child_processexecfilesyncfile-args-options).
+Windows drive types follow [Win32_LogicalDisk](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-logicaldisk).
+
 **System health auditor for AI-powered development machines.**
 
 Your machine runs Claude, Cursor, Codex, and dozens of Node processes simultaneously. Peak Performance monitors everything and tells you — in one number — whether your system can handle more or needs relief.

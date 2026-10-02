@@ -1,6 +1,8 @@
 import os from 'node:os';
 import { buildMaintenancePlan } from './maintenance.js';
 import type { MaintenancePlan, MaintenancePosture } from './maintenance.js';
+import { freshEvidence, probeStorage, STORAGE_SCOPES, storageState } from './storage.js';
+import type { StorageEvidence, StorageState } from './storage.js';
 
 export const WORKLOADS = [
   'interactive',
@@ -33,6 +35,15 @@ export interface PreflightOptions {
 }
 
 export interface PreflightPlan {
+  storage: { state: StorageState; evidence?: StorageEvidence };
+  probeEvidence?: MaintenancePlan['probeEvidence'];
+  storageLimits: {
+    noDependencyInstall: boolean;
+    noWorktreeAdditions: boolean;
+    noBuildFanout: boolean;
+    noMediaModelRun: boolean;
+    noUnattendedWork: boolean;
+  };
   timestamp: string;
   hostname: string;
   workload: WorkloadType;
@@ -70,6 +81,10 @@ export interface PreflightPlan {
     stopAfterWork: boolean;
     explicitModelReserveRecommended: boolean;
     strictMcpRecommended: boolean;
+    diskGrowthPermitted: boolean;
+    storageRecheckBeforeGrowth: boolean;
+    storageCleanupRequired: boolean;
+    escalationRequired: boolean;
   };
   hardBlocks: string[];
   constraints: string[];
@@ -193,6 +208,7 @@ export function evaluatePreflight(
   maintenance: MaintenancePlan,
   workload: WorkloadType,
   reserveMB?: number,
+  storage?: StorageEvidence,
 ): PreflightPlan {
   const profile = PROFILES[workload];
   const reserveValue = reserveMB ?? profile.reserveMB;
@@ -207,6 +223,44 @@ export function evaluatePreflight(
   const actions: string[] = [];
 
   const ramIsValid = Number.isFinite(maintenance.metrics.ramFreeMB) && maintenance.metrics.ramFreeMB >= 0;
+  const readingOnly = workload === 'interactive' && reserveIsValid && reserveValue === 0;
+  const diskGrowing = !['interactive', 'review-lite'].includes(workload);
+  const readings = Array.isArray(storage?.readings) ? storage.readings : [];
+  const states = readings.map(storageState);
+  const storageIsValid = freshEvidence(storage?.sampledAt) && readings.length === 3 && STORAGE_SCOPES.every(scope => readings.filter(r => r?.scope === scope).length === 1) && !states.includes('unknown');
+  const storagePosture: StorageState = !storageIsValid ? 'unknown' : states.includes('freeze') ? 'freeze' : states.includes('hold') ? 'hold' : states.includes('bounded') ? 'bounded' : 'normal';
+  // A known freeze on any fresh volume wins even when another volume failed.
+  const freeze = freshEvidence(storage?.sampledAt) && states.includes('freeze');
+  const effectiveStoragePosture = freeze ? 'freeze' : storagePosture;
+  if (freeze) {
+    addUnique(hardBlocks, 'Storage FREEZE: a required volume has less than 4% available; only approved reclaim may proceed.');
+    addUnique(actions, 'Escalate to the operator immediately and record the floor breach through the owning supervisor. Preflight does not delete data or send notifications.');
+  } else if (!readingOnly && !storageIsValid) {
+    addUnique(hardBlocks, 'Storage evidence is missing, invalid or stale; measure system, target and temporary volumes before admission.');
+  } else if (storagePosture === 'hold' && diskGrowing) {
+    addUnique(hardBlocks, 'Storage HOLD: a required volume has less than 8% available; no disk-growing workload may start.');
+  } else if (storagePosture === 'bounded' && diskGrowing) {
+    if (workload === 'build') {
+      addUnique(constraints, 'Storage BOUNDED (8–15%): one coherent interactive build only, with post-run cleanup; no dependency installs, worktree adds, build fanout, media/model or unattended work.');
+    } else {
+      addUnique(hardBlocks, `Storage BOUNDED (8–15%): ${workload} disk growth is prohibited; use an existing cloud runner or reclaim approved space.`);
+    }
+  }
+  if (!freeze && !readingOnly && ['interactive', 'review-lite'].includes(workload)) {
+    addUnique(actions, 'This admission covers reading and a bounded review only. Select the actual build, browser, model, swarm or overnight workload before any disk-growing step.');
+  }
+  if (requiresRamBudget) {
+    const evidence = maintenance.probeEvidence;
+    if (!freshEvidence(evidence?.sampledAt) || evidence?.cpu !== 'measured' || evidence?.processes !== 'measured' || evidence?.crashes !== 'measured') {
+      addUnique(hardBlocks, 'CPU, process and crash evidence must be measured and fresh; failed, partial or unsupported probes cannot establish workload headroom.');
+    }
+    const m = maintenance.metrics;
+    if (![m.ramUsedPct, m.cpuLoadPct, m.cpuSystemLoadPct].every(x => Number.isFinite(x) && x >= 0 && x <= 100)
+      || ![m.codexTaskRuntimeCount, m.localModelCount, m.devServerCount, m.crashLoopCount].every(x => Number.isInteger(x) && x >= 0)
+      || !Number.isFinite(m.mcpMemoryMB) || m.mcpMemoryMB < 0 || m.cpuSystemLoadPct > m.cpuLoadPct) {
+      addUnique(hardBlocks, 'Machine metrics are invalid; unknown numeric evidence cannot establish workload headroom.');
+    }
+  }
 
   if (!reserveIsValid) {
     addUnique(hardBlocks, 'Workload reserve must be a finite, non-negative number of MB.');
@@ -282,6 +336,15 @@ export function evaluatePreflight(
       : `${workload} workload is held until the blocking conditions are resolved.`;
 
   return {
+    storage: { state: effectiveStoragePosture, evidence: storage },
+    probeEvidence: maintenance.probeEvidence,
+    storageLimits: {
+      noDependencyInstall: effectiveStoragePosture !== 'normal',
+      noWorktreeAdditions: effectiveStoragePosture !== 'normal',
+      noBuildFanout: effectiveStoragePosture !== 'normal',
+      noMediaModelRun: effectiveStoragePosture !== 'normal',
+      noUnattendedWork: effectiveStoragePosture !== 'normal',
+    },
     timestamp: new Date().toISOString(),
     hostname: maintenance.hostname || os.hostname(),
     workload,
@@ -319,6 +382,10 @@ export function evaluatePreflight(
       stopAfterWork: requiresRamBudget,
       explicitModelReserveRecommended: workload === 'local-model',
       strictMcpRecommended: workload === 'review-lite',
+      diskGrowthPermitted: diskGrowing && hardBlocks.length === 0,
+      storageRecheckBeforeGrowth: diskGrowing,
+      storageCleanupRequired: diskGrowing && storagePosture === 'bounded' && hardBlocks.length === 0,
+      escalationRequired: freeze,
     },
     hardBlocks,
     constraints,
@@ -328,5 +395,6 @@ export function evaluatePreflight(
 
 export function buildPreflightPlan(workload: WorkloadType, options: PreflightOptions = {}): PreflightPlan {
   const maintenance = buildMaintenancePlan(options.cwd ?? process.cwd());
-  return evaluatePreflight(maintenance, workload, options.reserveMB);
+  const storage = probeStorage(options.cwd ?? process.cwd());
+  return evaluatePreflight(maintenance, workload, options.reserveMB, storage);
 }

@@ -59,6 +59,7 @@ export function probeMemory(): MemoryInfo {
 
 // ─── CPU ────────────────────────────────────────────────────────
 export interface CpuInfo {
+  status?: 'measured' | 'unknown';
   model: string;
   cores: number;
   logicalCores: number;
@@ -90,9 +91,14 @@ export function probeCpu(): CpuInfo {
   let idleDelta = 0;
   let totalDelta = 0;
   let systemDelta = 0;
+  let valid = before.length > 0 && before.length === after.length;
   for (let index = 0; index < Math.min(before.length, after.length); index++) {
     const start = before[index].times;
     const end = after[index].times;
+    if (['user', 'nice', 'sys', 'idle', 'irq'].some(key => {
+      const k = key as keyof typeof start;
+      return !Number.isFinite(start[k]) || !Number.isFinite(end[k]) || end[k] < start[k];
+    })) valid = false;
     const idle = Math.max(0, end.idle - start.idle);
     const system = Math.max(0, end.sys - start.sys) + Math.max(0, end.irq - start.irq);
     const total = Math.max(0,
@@ -106,10 +112,11 @@ export function probeCpu(): CpuInfo {
     systemDelta += system;
     totalDelta += total;
   }
-  const loadPct = totalDelta > 0 ? Math.min(100, Math.max(0, Math.round((1 - idleDelta / totalDelta) * 100))) : 0;
+  const loadPct = totalDelta > 0 ? Math.min(100, Math.max(0, Math.round((totalDelta - idleDelta) / totalDelta * 100))) : 0;
   const systemLoadPct = totalDelta > 0 ? Math.min(100, Math.max(0, Math.round(systemDelta / totalDelta * 100))) : 0;
 
   return {
+    status: valid && totalDelta > 0 ? 'measured' : 'unknown',
     model: cpus[0]?.model ?? 'unknown',
     cores,
     logicalCores,
@@ -121,6 +128,7 @@ export function probeCpu(): CpuInfo {
 
 // ─── RECENT APPLICATION CRASHES ───────────────────────────────
 export interface CrashLoopInfo {
+  status?: 'measured' | 'unknown' | 'unsupported';
   windowMinutes: number;
   totalCrashes: number;
   topApp: string;
@@ -131,6 +139,7 @@ export interface CrashLoopInfo {
 export function probeCrashLoops(windowMinutes = 15): CrashLoopInfo {
   const boundedMinutes = Math.max(1, Math.min(120, Math.round(windowMinutes)));
   const empty: CrashLoopInfo = {
+    status: os.platform() === 'win32' ? 'unknown' : 'unsupported',
     windowMinutes: boundedMinutes,
     totalCrashes: 0,
     topApp: '',
@@ -140,20 +149,24 @@ export function probeCrashLoops(windowMinutes = 15): CrashLoopInfo {
   if (os.platform() !== 'win32') return empty;
 
   const script = [
-    '$ErrorActionPreference = "SilentlyContinue";',
-    `$events = @(Get-WinEvent -FilterHashtable @{LogName="Application"; Id=1000; StartTime=(Get-Date).AddMinutes(-${boundedMinutes})});`,
+    '$ErrorActionPreference = "Stop";',
+    `$events = @(); try { $events = @(Get-WinEvent -FilterHashtable @{LogName="Application"; ProviderName="Application Error"; Id=1000; StartTime=(Get-Date).AddMinutes(-${boundedMinutes})} -ErrorAction Stop) } catch { if ($_.FullyQualifiedErrorId -notlike "NoMatchingEventsFound*") { throw } };`,
     '$apps = @();',
-    'foreach ($event in $events) { if ($event.Message -match "Faulting application name:\\s*([^,\\r\\n]+)") { $apps += $Matches[1].Trim() } };',
+    'foreach ($event in $events) { $xml = [xml]$event.ToXml(); $app = @($xml.Event.EventData.Data | Where-Object { $_.Name -eq "AppName" }); if ($app.Count -ne 1 -or [string]::IsNullOrWhiteSpace($app[0].InnerText)) { throw "Unrecognized crash event schema" }; $apps += $app[0].InnerText };',
     '$groups = @($apps | Group-Object | Sort-Object Count -Descending | Select-Object -First 10 @{n="name";e={$_.Name}},@{n="count";e={$_.Count}});',
     '$top = $groups | Select-Object -First 1;',
-    `[pscustomobject]@{windowMinutes=${boundedMinutes};totalCrashes=$apps.Count;topApp=if($top){$top.name}else{""};topAppCrashes=if($top){$top.count}else{0};apps=$groups} | ConvertTo-Json -Compress -Depth 4`,
+    `[pscustomobject]@{status="measured";windowMinutes=${boundedMinutes};totalCrashes=$apps.Count;topApp=if($top){$top.name}else{""};topAppCrashes=if($top){$top.count}else{0};apps=$groups} | ConvertTo-Json -Compress -Depth 4`,
   ].join(' ');
 
   const raw = runPS(script, 8_000);
   if (!raw) return empty;
   try {
     const parsed = JSON.parse(raw) as Partial<CrashLoopInfo>;
+    if (parsed.status !== 'measured' || !Number.isInteger(parsed.totalCrashes) || Number(parsed.totalCrashes) < 0 || !Number.isInteger(parsed.topAppCrashes) || Number(parsed.topAppCrashes) < 0 || Number(parsed.topAppCrashes) > Number(parsed.totalCrashes) || !Array.isArray(parsed.apps)) return empty;
+    if (typeof parsed.topApp !== 'string' || (Number(parsed.totalCrashes) > 0 && (!parsed.topApp || !Number(parsed.topAppCrashes)))
+      || parsed.apps.some(app => !app || typeof app.name !== 'string' || !app.name || !Number.isInteger(app.count) || app.count < 1)) return empty;
     return {
+      status: 'measured',
       windowMinutes: boundedMinutes,
       totalCrashes: Number(parsed.totalCrashes ?? 0),
       topApp: String(parsed.topApp ?? ''),
@@ -257,6 +270,7 @@ export function probeGpu(): GpuInfo | null {
 
 // ─── PROCESSES ──────────────────────────────────────────────────
 export interface ProcessInfo {
+  status?: 'measured' | 'unknown';
   totalProcesses: number;
   nodeCount: number;
   claudeCount: number;
@@ -546,20 +560,25 @@ function finalizeProcessInfo(info: ProcessInfo): void {
 
 function probeWindowsProcesses(info: ProcessInfo): boolean {
   const ps = [
-    '$ErrorActionPreference = "SilentlyContinue";',
+    '$ErrorActionPreference = "Stop";',
     'Get-CimInstance Win32_Process |',
     'Select-Object ProcessId,ParentProcessId,Name,CommandLine,WorkingSetSize |',
     'ConvertTo-Json -Compress -Depth 2',
   ].join(' ');
   const rows = parseJsonArray<WinProcessRow>(runPS(ps, 15_000));
-  if (rows.length === 0) return false;
+  if (rows.length === 0 || rows.some(row => !row || typeof row !== 'object')) return false;
+  info.status = 'measured';
 
   info.totalProcesses = rows.length;
 
   const consumers: ProcessConsumer[] = [];
   for (const row of rows) {
     const name = String(row.Name ?? '').trim();
-    if (!name) continue;
+    if (!name) { info.status = 'unknown'; continue; }
+    if (!Number.isInteger(Number(row.ProcessId)) || Number(row.ProcessId) < 0 || !Number.isInteger(Number(row.ParentProcessId)) || Number(row.ParentProcessId) < 0 || !Number.isFinite(Number(row.WorkingSetSize)) || Number(row.WorkingSetSize) < 0) info.status = 'unknown';
+    // Protected OS processes commonly deny CommandLine. Missing command data
+    // for runtimes that can host agents/MCP/builds cannot establish headroom.
+    if (/^(node|python[\d.]*|bun|deno|uv|npx|cmd|bash|sh|railway|claude|codex)(\.exe|\.cmd)?$/i.test(name) && (typeof row.CommandLine !== 'string' || !row.CommandLine.trim())) info.status = 'unknown';
 
     addProcessCounts(info, name);
 
@@ -592,6 +611,7 @@ function probeWindowsProcesses(info: ProcessInfo): boolean {
 
 export function probeProcesses(): ProcessInfo {
   const info: ProcessInfo = {
+    status: 'unknown',
     totalProcesses: 0,
     nodeCount: 0,
     claudeCount: 0,
@@ -626,12 +646,14 @@ export function probeProcesses(): ProcessInfo {
     const ps = runFile('ps', ['-eo', 'pid=,ppid=,rss=,comm=,args=']);
     const lines = ps.split('\n').filter(l => l.trim());
     info.totalProcesses = lines.length;
+    info.status = lines.length > 0 ? 'measured' : 'unknown';
 
     for (const line of lines) {
       const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/);
-      if (!match) continue;
+      if (!match) { info.status = 'unknown'; continue; }
       const [, pid, ppid, rssKB, comm, args] = match;
       const name = comm.split('/').pop() ?? comm;
+      if (/^(node|python[\d.]*|bun|deno|uv|npx|bash|sh|claude|codex)$/i.test(name) && !args.trim()) info.status = 'unknown';
       const command = redactCommandLine(args || comm);
       addProcessCounts(info, name);
       const classification = classifyProcess(name, command);

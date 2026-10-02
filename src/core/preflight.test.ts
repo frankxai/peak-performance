@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { MaintenancePlan } from './maintenance.js';
-import { evaluatePreflight, readPreflightReserveMB } from './preflight.js';
+import { evaluatePreflight as evaluateActualPreflight, readPreflightReserveMB } from './preflight.js';
+
+import type { StorageEvidence } from './storage.js';
+
+function measuredStorage(free = 20): StorageEvidence {
+  return { sampledAt: new Date().toISOString(), readings: ['system', 'target', 'temp'].map(scope => ({ scope: scope as 'system' | 'target' | 'temp', status: 'measured', totalBytes: '1000000', availableBytes: String(free * 10000) })) };
+}
+function evaluatePreflight(maintenance: MaintenancePlan, workload: Parameters<typeof evaluateActualPreflight>[1], reserve?: number, storage = measuredStorage()) {
+  return evaluateActualPreflight(maintenance, workload, reserve, storage);
+}
 
 function maintenance(overrides: Partial<MaintenancePlan['metrics']> = {}, posture: MaintenancePlan['posture'] = 'green'): MaintenancePlan {
   return {
     timestamp: '2026-07-11T00:00:00.000Z',
+    probeEvidence: { sampledAt: new Date().toISOString(), cpu: 'measured', processes: 'measured', crashes: 'measured' },
     hostname: 'test-host',
     posture,
     swarmPosture: posture === 'green' ? 'expand' : posture === 'watch' ? 'steady' : posture === 'constrain' ? 'pause-new-swarms' : 'drain-and-handoff',
@@ -45,6 +55,72 @@ function maintenance(overrides: Partial<MaintenancePlan['metrics']> = {}, postur
     relatedWorkItems: [],
   };
 }
+
+test('storage floors bind the reproduced model/swarm/overnight/build cases independently of RAM', () => {
+  for (const free of [3, 5, 10, 15]) for (const workload of ['build', 'local-model', 'swarm', 'overnight'] as const) {
+    const result = evaluatePreflight(maintenance({ ramFreeMB: 40_000 }), workload, 12_288, measuredStorage(free));
+    assert.equal(result.decision, free < 8 || free < 15 && workload !== 'build' ? 'hold' : free < 15 ? 'bounded' : 'allow', `${free}% ${workload}`);
+    assert.equal(result.requirements.diskGrowthPermitted, result.decision !== 'hold');
+    assert.equal(result.requirements.storageRecheckBeforeGrowth, true);
+    assert.equal(result.requirements.storageCleanupRequired, free === 10 && workload === 'build');
+    assert.ok(Object.values(result.storageLimits).every(prohibited => prohibited === (free < 15)));
+  }
+});
+
+test('target and temp floor breaches override a healthy system volume', () => {
+  for (const scope of ['system', 'target', 'temp']) {
+    const storage = measuredStorage();
+    storage.readings.find(r => r.scope === scope)!.availableBytes = '79999';
+    const result = evaluatePreflight(maintenance(), 'build', undefined, storage);
+    assert.equal(result.decision, 'hold', scope);
+    assert.equal(result.storage.state, 'hold');
+  }
+});
+
+test('missing, duplicate, stale and malformed storage evidence never admits growing work', () => {
+  const malformed = measuredStorage(); malformed.readings[0].availableBytes = '1000001';
+  const duplicate = measuredStorage(); duplicate.readings[1].scope = 'system';
+  const stale = measuredStorage(); stale.sampledAt = new Date(Date.now() - 15 * 60_000).toISOString();
+  const unknown = measuredStorage(); unknown.readings[0].status = 'unknown';
+  for (const storage of [undefined, malformed, duplicate, stale, unknown]) {
+    assert.equal(evaluateActualPreflight(maintenance(), 'build', undefined, storage).decision, 'hold');
+  }
+});
+
+test('freeze holds reading and demands escalation without performing remediation', () => {
+  const storage = measuredStorage(3);
+  storage.readings[1].status = 'unknown';
+  const result = evaluatePreflight(maintenance(), 'interactive', 0, storage);
+  assert.equal(result.decision, 'hold');
+  assert.equal(result.storage.state, 'freeze');
+  assert.equal(result.requirements.escalationRequired, true);
+});
+
+test('reading stays permitted above freeze; declaring interactive never grants disk growth', () => {
+  for (const free of [4, 7, 8, 10, 15]) {
+    const result = evaluatePreflight(maintenance(), 'interactive', 0, measuredStorage(free));
+    assert.equal(result.decision, 'allow');
+    assert.equal(result.requirements.diskGrowthPermitted, false);
+  }
+  const noProof = maintenance(); delete noProof.probeEvidence;
+  assert.equal(evaluateActualPreflight(noProof, 'interactive', 0).decision, 'allow');
+  assert.equal(evaluatePreflight(maintenance(), 'interactive', 2048, measuredStorage(10)).requirements.diskGrowthPermitted, false);
+});
+
+test('probe failure, partial data, unsupported crashes and stale evidence hold budgeted work', () => {
+  for (const key of ['cpu', 'processes', 'crashes'] as const) {
+    const current = maintenance(); current.probeEvidence![key] = 'unknown';
+    assert.equal(evaluatePreflight(current, 'build').decision, 'hold', key);
+  }
+  const unsupported = maintenance(); unsupported.probeEvidence!.crashes = 'unsupported';
+  assert.equal(evaluatePreflight(unsupported, 'overnight').decision, 'hold');
+  const missing = maintenance(); delete missing.probeEvidence;
+  assert.equal(evaluatePreflight(missing, 'interactive', 1).decision, 'hold');
+  const stale = maintenance(); stale.probeEvidence!.sampledAt = '2000-01-01T00:00:00Z';
+  assert.equal(evaluatePreflight(stale, 'build').decision, 'hold');
+  assert.equal(evaluatePreflight(maintenance({ cpuLoadPct: Number.NaN }), 'build').decision, 'hold');
+  assert.equal(evaluatePreflight(maintenance({ codexTaskRuntimeCount: -1 }), 'build').decision, 'hold');
+});
 
 test('admits normal interactive work without unnecessary restrictions', () => {
   const result = evaluatePreflight(maintenance({ crashLoopApp: 'test.exe', crashLoopCount: 20 }, 'maintenance'), 'interactive');
