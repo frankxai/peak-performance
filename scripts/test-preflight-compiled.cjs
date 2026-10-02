@@ -70,7 +70,7 @@ test('compiled MCP cannot bypass the server-directory gate through a valid expli
   rejectedPathFixture('//fixture.invalid/share', [root, root, root, root], ['pp_audit', 'pp_preflight', 'pp_trend', 'pp_fix']);
 });
 
-function run(entry, args = [], input, freeMB = 2419, sensorFailure = false, freePct = 20, evidenceStatus = 'measured') {
+function run(entry, args = [], input, freeMB = 2419, sensorFailure = false, freePct = 20, evidenceStatus = 'measured', capacityEvidence = true) {
   const directory = mkdtempSync(join(tmpdir(), 'pp-compiled-test-'));
   const preload = join(directory, 'sensors.cjs');
   try {
@@ -85,7 +85,7 @@ function run(entry, args = [], input, freeMB = 2419, sensorFailure = false, free
         if (${JSON.stringify(sensorFailure)}) throw new Error('Fixture sensor failure');
         return ({
         hostname: 'fixture', posture: 'green', swarmPosture: 'expand',
-        probeEvidence: { sampledAt: new Date().toISOString(), cpu: ${JSON.stringify(evidenceStatus)}, processes: ${JSON.stringify(evidenceStatus)}, crashes: ${JSON.stringify(evidenceStatus)} },
+        probeEvidence: { sampledAt: new Date().toISOString(), ...(${capacityEvidence} ? { memory: ${JSON.stringify(evidenceStatus)}, disk: ${JSON.stringify(evidenceStatus)} } : {}), cpu: ${JSON.stringify(evidenceStatus)}, processes: ${JSON.stringify(evidenceStatus)}, crashes: ${JSON.stringify(evidenceStatus)} },
         metrics: {
           ramFreeMB: ${freeMB}, ramUsedPct: 50, cpuLoadPct: 20, cpuSystemLoadPct: 5,
           codexTaskRuntimeCount: 0, mcpMemoryMB: 0, localModelCount: 0,
@@ -132,6 +132,23 @@ test('compiled CLI does not admit unknown machine evidence', () => {
   const result = run('dist/cli.js', ['preflight', '--workload', 'build', '--json'], undefined, 40000, false, 20, 'unknown');
   assert.equal(result.status, 2);
   assert.equal(JSON.parse(result.stdout).decision, 'hold');
+});
+
+test('compiled CLI holds a legacy reserved-work plan missing capacity evidence', () => {
+  const result = run('dist/cli.js', ['preflight', '--workload', 'review-lite', '--reserve-gb', '2', '--json'], undefined, 40000, false, 20, 'measured', false);
+  assert.equal(result.status, 2);
+  const plan = JSON.parse(result.stdout);
+  assert.equal(plan.decision, 'hold');
+  assert.match(plan.hardBlocks.join(' '), /Memory, disk, CPU, process and crash evidence/);
+});
+
+test('compiled MCP signals hold for a legacy plan missing capacity evidence', () => {
+  const input = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'pp_preflight', arguments: { workload: 'review-lite', reserveGB: 2 } } }) + '\n';
+  const result = run('dist/integrations/mcp-server/index.js', [], input, 40000, false, 20, 'measured', false);
+  assert.equal(result.status, 0);
+  const response = JSON.parse(result.stdout);
+  assert.equal(response.result.isError, true);
+  assert.equal(JSON.parse(response.result.content[0].text).decision, 'hold');
 });
 
 for (const free of [3, 5, 10, 15]) test(`compiled MCP storage decision and error flag: ${free}%`, () => {
