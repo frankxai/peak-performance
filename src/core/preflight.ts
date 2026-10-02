@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { buildMaintenancePlan } from './maintenance.js';
+import { buildAdmissionMaintenancePlan } from './maintenance.js';
 import type { MaintenancePlan, MaintenancePosture } from './maintenance.js';
 import { freshEvidence, probeStorage, STORAGE_SCOPES, storageState } from './storage.js';
 import type { StorageEvidence, StorageState } from './storage.js';
@@ -394,7 +394,7 @@ export function evaluatePreflight(
 }
 
 export function buildPreflightPlan(workload: WorkloadType, options: PreflightOptions = {}): PreflightPlan {
-  const maintenance = buildMaintenancePlan(options.cwd ?? process.cwd());
+  const maintenance = buildAdmissionMaintenancePlan(options.cwd ?? process.cwd());
   const storage = probeStorage(options.cwd ?? process.cwd());
   return evaluatePreflight(maintenance, workload, options.reserveMB, storage);
 }

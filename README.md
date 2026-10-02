@@ -9,7 +9,7 @@ cleanup and reports explicit prohibitions on installs, worktree additions, build
 and unattended work. At least 15% follows the other resource budgets. Thresholds
 use exact bytes, without rounding a displayed percentage.
 
-Budgeted work requires fresh, measured CPU, process and crash evidence. Failed
+Budgeted work requires fresh, measured memory, disk, CPU, process and crash evidence. Failed
 or partial probes hold admission. Windows crashes use structured event data;
 POSIX crash collection is currently unsupported and therefore holds budgeted
 work. Missing command lines for agent-capable runtimes also hold admission,
@@ -23,9 +23,12 @@ not a reservation or ongoing supervisor.
 Filesystem reads run in a bounded child. Windows network/device paths and mapped
 network drives are rejected; mount resolution is checked before statfs. This
 does not establish a sandbox against path races or POSIX remote mounts. The
-existing full audit remains in the preflight path, and its latency, process
-classification coverage, tray parity, irreversible cleanup and installed
-client acceptance still need separate verification before main integration.
+preflight collects memory, CPU, disk, process, uptime and crash evidence plus
+the three storage scopes. It skips GPU, Git, secret, temp-file and knowledge
+audits. The admission snapshot does not supply a Ten Gate score; full audit and
+maintenance still collect all gates. Process classification coverage, physical
+calibration, irreversible cleanup and installed client acceptance still need
+separate verification before main integration.
 
 The storage API is documented in [Node 18 fs.statfsSync](https://nodejs.org/docs/latest-v18.x/api/fs.html#fsstatfssyncpath-options).
 Subprocess bounds follow [Node child_process](https://nodejs.org/docs/latest-v18.x/api/child_process.html#child_processexecfilesyncfile-args-options).

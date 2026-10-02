@@ -26,8 +26,8 @@ function source(relative, context) {
 const preflight = source('src/core/preflight.ts');
 const tests = source('src/core/preflight.test.ts');
 const storage = source('src/core/storage.ts');
-const sensors = new SyntheticModule(['buildMaintenancePlan'], function () {
-  this.setExport('buildMaintenancePlan', () => {
+const sensors = new SyntheticModule(['buildAdmissionMaintenancePlan'], function () {
+  this.setExport('buildAdmissionMaintenancePlan', () => {
     throw new Error('Pure admission tests must not invoke machine sensors.');
   });
 });
@@ -70,7 +70,7 @@ async function adapterTest() {
   const unused = () => { throw new Error('Unexpected non-preflight tool or sensor invocation.'); };
   const exportsByImport = {
     '../../core/maintenance.js': { buildMaintenancePlan: () => fixture },
-    './maintenance.js': { buildMaintenancePlan: () => fixture },
+    './maintenance.js': { buildAdmissionMaintenancePlan: () => fixture },
     './storage.js': { ...storage.namespace, probeStorage: () => storageFixture },
     '../../core/audit.js': { runAudit: unused },
     '../../history/tracker.js': { TrendTracker: unused },
@@ -124,6 +124,11 @@ async function maintenanceEvidenceTest() {
   await maintenance.link(async name => {
     if (name === 'node:os') return builtin(name);
     if (name === './audit.js') return new SyntheticModule(['runAuditWithProbes'], function () { this.setExport('runAuditWithProbes', () => ({ audit: { totalScore: 90, grade: 'A' }, snapshot })); });
+    if (name === './probes.js') return new SyntheticModule(['probeMemory', 'probeCpu', 'probeDisk', 'probeProcesses', 'probeUptime', 'probeCrashLoops'], function () {
+      for (const key of ['probeMemory', 'probeCpu', 'probeDisk', 'probeProcesses', 'probeUptime', 'probeCrashLoops']) {
+        this.setExport(key, () => { throw new Error('Full maintenance must reuse its audit snapshot'); });
+      }
+    });
     throw new Error('Unexpected maintenance fixture import: ' + name);
   });
   await maintenance.evaluate();
@@ -150,7 +155,107 @@ async function maintenanceEvidenceTest() {
   });
 }
 
-tests.link(link).then(() => tests.evaluate()).then(adapterTest).then(maintenanceEvidenceTest).catch(error => {
+async function admissionOnlyTest() {
+  const assert = require('node:assert/strict');
+  const test = require('node:test');
+  const calls = [];
+  const snapshot = {
+    mem: { totalMB: 32768, freeMB: 18000, usedPct: 45 },
+    disk: { totalGB: 1000, freeGB: 200, usedPct: 80 },
+    uptime: { uptimeHours: 12 },
+    cpu: { status: 'measured', loadPct: 20, systemLoadPct: 5 },
+    crashes: { status: 'measured', topApp: '', topAppCrashes: 0, totalCrashes: 0, windowMinutes: 15 },
+    procs: { status: 'measured', processes: [], totalProcesses: 100, nodeCount: 0, claudeCount: 0, cursorCount: 0, codexCount: 0, codexTaskRuntimeCount: 0, mcpCount: 0, mcpProcessCount: 0, mcpMemoryMB: 0, duplicateMcpProcesses: 0, agentTreeMemoryMB: 0 },
+  };
+  let availableBytes = 200000;
+  const maintenance = source('src/core/maintenance.ts');
+  const admission = source('src/core/preflight.ts');
+  const probes = {};
+  for (const [name, key] of Object.entries({ probeMemory: 'mem', probeCpu: 'cpu', probeDisk: 'disk', probeProcesses: 'procs', probeUptime: 'uptime', probeCrashLoops: 'crashes' })) {
+    probes[name] = (...args) => { calls.push({ name, args }); return snapshot[key]; };
+  }
+  for (const name of ['probeGpu', 'probeGit', 'probeSecrets', 'probeTemp']) {
+    probes[name] = () => { throw new Error('Admission must not collect ' + name); };
+  }
+  const synthetic = (values, identifier) => new SyntheticModule(Object.keys(values), function () {
+    for (const [key, value] of Object.entries(values)) this.setExport(key, value);
+  }, { identifier });
+  const audit = synthetic({ runAuditWithProbes: () => {
+    calls.push({ name: 'full-audit' });
+    return { audit: { totalScore: 90, grade: 'A' }, snapshot };
+  } }, './audit.js');
+  await admission.link(async name => {
+    if (name === './maintenance.js') return maintenance;
+    if (name === './audit.js') return audit;
+    if (name === './probes.js') return synthetic(probes, name);
+    if (name === 'node:os') return builtin(name);
+    if (name === './storage.js') return synthetic({ ...storage.namespace, probeStorage: cwd => {
+      calls.push({ name: 'probeStorage', args: [cwd] });
+      return { sampledAt: new Date().toISOString(), readings: ['system', 'target', 'temp'].map(scope => ({ scope, status: 'measured', totalBytes: '1000000', availableBytes: String(availableBytes) })) };
+    } }, name);
+    throw new Error('Unexpected admission collection import: ' + name);
+  });
+  await admission.evaluate();
+  const plan = (workload = 'review-lite', reserveMB = 2048) => admission.namespace.buildPreflightPlan(workload, { cwd: __dirname, reserveMB });
+  test('actual preflight collects only admission evidence, without a full audit', () => {
+    calls.length = 0;
+    assert.equal(plan().decision, 'allow');
+    assert.deepEqual(calls.map(x => x.name).sort(), ['probeMemory', 'probeCpu', 'probeDisk', 'probeProcesses', 'probeUptime', 'probeCrashLoops', 'probeStorage'].sort());
+    assert.equal(calls.find(x => x.name === 'probeDisk').args[0], __dirname);
+    assert.equal(calls.find(x => x.name === 'probeStorage').args[0], __dirname);
+  });
+  test('admission maintenance does not invent a Ten Gate score; full maintenance keeps its audit', () => {
+    calls.length = 0;
+    const lean = maintenance.namespace.buildAdmissionMaintenancePlan(__dirname);
+    assert.equal(lean.metrics.score, null);
+    assert.equal(lean.metrics.grade, 'UNKNOWN');
+    assert.match(lean.summary, /Ten Gate score not collected/);
+    assert.ok(!calls.some(x => x.name === 'full-audit'));
+    calls.length = 0;
+    const full = maintenance.namespace.buildMaintenancePlan(__dirname);
+    assert.equal(full.metrics.score, 90);
+    assert.equal(full.metrics.grade, 'A');
+    assert.deepEqual(calls, [{ name: 'full-audit' }]);
+  });
+  test('actual admission collector preserves unknown and unsupported holds for every required probe', () => {
+    for (const [key, field, value] of [['mem', 'totalMB', 0], ['disk', 'totalGB', 0], ['cpu', 'status', 'unknown'], ['procs', 'status', 'unknown'], ['crashes', 'status', 'unknown'], ['crashes', 'status', 'unsupported']]) {
+      const saved = snapshot[key][field]; snapshot[key][field] = value;
+      try {
+        const held = plan();
+        assert.equal(held.decision, 'hold', key + '/' + value);
+        assert.equal(held.requirements.diskGrowthPermitted, false);
+        assert.equal(plan('interactive', 0).decision, 'allow');
+      } finally { snapshot[key][field] = saved; }
+    }
+  });
+  test('actual lean collection preserves the RAM floor, exact storage boundaries and freeze on reading', () => {
+    assert.equal(plan('interactive', 32 * 1024).decision, 'hold');
+    const saved = snapshot.mem.freeMB; snapshot.mem.freeMB = 4095;
+    try {
+      assert.equal(plan('build', 0).decision, 'hold');
+      assert.equal(plan('interactive', 0).decision, 'allow');
+    } finally { snapshot.mem.freeMB = saved; }
+    try {
+      availableBytes = 100000;
+      assert.equal(plan('build', 0).decision, 'bounded');
+      assert.equal(plan('swarm', 0).decision, 'hold');
+      availableBytes = 30000;
+      const frozen = plan('interactive', 0);
+      assert.equal(frozen.decision, 'hold');
+      assert.equal(frozen.requirements.escalationRequired, true);
+      for (const [bytes, state] of [[39999, 'freeze'], [40000, 'hold'], [79999, 'hold'], [80000, 'bounded'], [149999, 'bounded'], [150000, 'normal']]) {
+        availableBytes = bytes;
+        const reading = plan('interactive', 0);
+        assert.equal(reading.storage.state, state, String(bytes));
+        assert.equal(reading.decision, state === 'freeze' ? 'hold' : 'allow');
+        assert.equal(plan('build', 0).decision, bytes < 80000 ? 'hold' : bytes < 150000 ? 'bounded' : 'allow');
+        assert.equal(plan('swarm', 0).decision, bytes < 150000 ? 'hold' : 'allow');
+      }
+    } finally { availableBytes = 200000; }
+  });
+}
+
+tests.link(link).then(() => tests.evaluate()).then(adapterTest).then(maintenanceEvidenceTest).then(admissionOnlyTest).catch(error => {
   console.error(error);
   process.exitCode = 1;
 });

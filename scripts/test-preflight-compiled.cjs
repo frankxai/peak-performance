@@ -9,6 +9,69 @@ const { join, resolve } = require('node:path');
 
 const root = resolve(__dirname, '..');
 
+test('real emitted admission builder skips full audit and preserves evidence holds', () => {
+  const script = String.raw`
+    const assert = require('node:assert/strict');
+    const root = process.argv[1];
+    const { join } = require('node:path');
+    const probes = require(join(root, 'dist/core/probes.js'));
+    const audit = require(join(root, 'dist/core/audit.js'));
+    const storage = require(join(root, 'dist/core/storage.js'));
+    const calls = [];
+    const snapshot = {
+      mem: { totalMB: 32768, freeMB: 18000, usedPct: 45 },
+      disk: { totalGB: 1000, freeGB: 200, usedPct: 80 }, uptime: { uptimeHours: 12 },
+      cpu: { status: 'measured', loadPct: 20, systemLoadPct: 5 },
+      crashes: { status: 'measured', topApp: '', topAppCrashes: 0, totalCrashes: 0, windowMinutes: 15 },
+      procs: { status: 'measured', processes: [], totalProcesses: 100, nodeCount: 0, claudeCount: 0, cursorCount: 0, codexCount: 0, codexTaskRuntimeCount: 0, mcpCount: 0, mcpProcessCount: 0, mcpMemoryMB: 0, duplicateMcpProcesses: 0, agentTreeMemoryMB: 0 },
+    };
+    let allowFullAudit = false;
+    audit.runAuditWithProbes = () => {
+      assert.ok(allowFullAudit, 'Admission must not run the full audit');
+      calls.push('full-audit');
+      return { audit: { totalScore: 90, grade: 'A' }, snapshot };
+    };
+    for (const [name, key] of Object.entries({ probeMemory: 'mem', probeCpu: 'cpu', probeDisk: 'disk', probeProcesses: 'procs', probeUptime: 'uptime', probeCrashLoops: 'crashes' })) {
+      probes[name] = cwd => { if (name === 'probeDisk') assert.equal(cwd, root); calls.push(name); return snapshot[key]; };
+    }
+    for (const name of ['probeGpu', 'probeGit', 'probeSecrets', 'probeTemp']) probes[name] = () => { throw new Error('Forbidden admission probe ' + name); };
+    storage.probeStorage = cwd => {
+      assert.equal(cwd, root); calls.push('probeStorage');
+      return { sampledAt: new Date().toISOString(), readings: ['system', 'target', 'temp'].map(scope => ({ scope, status: 'measured', totalBytes: '1000000', availableBytes: '200000' })) };
+    };
+    const maintenance = require(join(root, 'dist/core/maintenance.js'));
+    const preflight = require(join(root, 'dist/core/preflight.js'));
+    const plan = (workload = 'review-lite', reserveMB = 2048) => preflight.buildPreflightPlan(workload, { cwd: root, reserveMB });
+    assert.equal(plan().decision, 'allow');
+    assert.deepEqual(calls.slice().sort(), ['probeMemory', 'probeCpu', 'probeDisk', 'probeProcesses', 'probeUptime', 'probeCrashLoops', 'probeStorage'].sort());
+    const lean = maintenance.buildAdmissionMaintenancePlan(root);
+    assert.equal(lean.metrics.score, null);
+    assert.equal(lean.metrics.grade, 'UNKNOWN');
+    assert.match(lean.summary, /Ten Gate score not collected/);
+    for (const [key, field, value] of [['mem', 'totalMB', 0], ['disk', 'totalGB', 0], ['cpu', 'status', 'unknown'], ['procs', 'status', 'unknown'], ['crashes', 'status', 'unknown'], ['crashes', 'status', 'unsupported']]) {
+      const saved = snapshot[key][field]; snapshot[key][field] = value;
+      try {
+        assert.equal(plan().decision, 'hold', key + '/' + value);
+        assert.equal(plan('interactive', 0).decision, 'allow');
+      } finally { snapshot[key][field] = saved; }
+    }
+    calls.length = 0; allowFullAudit = true;
+    const full = maintenance.buildMaintenancePlan(root);
+    assert.equal(full.metrics.score, 90);
+    assert.equal(full.metrics.grade, 'A');
+    assert.deepEqual(calls, ['full-audit']);
+    process.stdout.write(JSON.stringify({ actualEmittedAdmission: true, fullAuditPreserved: true, unknownCases: 6 }));
+  `;
+  const result = spawnSync(process.execPath, ['-e', script, root], {
+    cwd: root, encoding: 'utf8', timeout: 10000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.signal, null);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.deepEqual(JSON.parse(result.stdout), { actualEmittedAdmission: true, fullAuditPreserved: true, unknownCases: 6 });
+});
+
 // Exercise the emitted adapter and host-native path implementation with all
 // filesystem checks intercepted. Never contact a share or run machine probes.
 function rejectedPathFixture(defaultCwd, inputs, names = inputs.map(() => 'pp_preflight')) {
@@ -19,6 +82,7 @@ function rejectedPathFixture(defaultCwd, inputs, names = inputs.map(() => 'pp_pr
     let dispatches = 0;
     const deny = () => { dispatches++; throw new Error('Fixture denies machine operations'); };
     maintenance.buildMaintenancePlan = deny;
+    maintenance.buildAdmissionMaintenancePlan = deny;
     require(${JSON.stringify(join(root, 'dist/core/audit.js'))}).runAudit = deny;
     require(${JSON.stringify(join(root, 'dist/fixes/autofix.js'))}).runAllFixes = deny;
     require(${JSON.stringify(join(root, 'dist/history/tracker.js'))}).TrendTracker = function () { deny(); };
@@ -79,9 +143,11 @@ function run(entry, args = [], input, freeMB = 2419, sensorFailure = false, free
       const maintenance = require(${JSON.stringify(maintenance)});
       const deny = () => { throw new Error('Fixture refuses audit or remediation'); };
       require(${JSON.stringify(join(root, 'dist/core/audit.js'))}).runAudit = deny;
+      require(${JSON.stringify(join(root, 'dist/core/audit.js'))}).runAuditWithProbes = deny;
       require(${JSON.stringify(join(root, 'dist/fixes/autofix.js'))}).runAllFixes = deny;
       require(${JSON.stringify(join(root, 'dist/core/storage.js'))}).probeStorage = () => ({ sampledAt: new Date().toISOString(), readings: ['system', 'target', 'temp'].map(scope => ({ scope, status: 'measured', totalBytes: '1000000', availableBytes: String(${freePct} * 10000) })) });
-      maintenance.buildMaintenancePlan = () => {
+      maintenance.buildMaintenancePlan = deny;
+      maintenance.buildAdmissionMaintenancePlan = () => {
         if (${JSON.stringify(sensorFailure)}) throw new Error('Fixture sensor failure');
         return ({
         hostname: 'fixture', posture: 'green', swarmPosture: 'expand',

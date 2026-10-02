@@ -1,6 +1,8 @@
 import os from 'node:os';
 import type { AuditResult } from '../types.js';
 import { runAuditWithProbes } from './audit.js';
+import type { AuditProbeSnapshot } from './audit.js';
+import { probeMemory, probeCpu, probeDisk, probeProcesses, probeUptime, probeCrashLoops } from './probes.js';
 import type { ProcessInfo, ProcessRole } from './probes.js';
 
 export type MaintenancePosture = 'green' | 'watch' | 'constrain' | 'maintenance' | 'restart-soon';
@@ -110,8 +112,29 @@ function addAction(actions: MaintenanceAction[], action: MaintenanceAction): voi
 export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
   const sampledAt = new Date().toISOString();
   const execution = runAuditWithProbes({ cwd });
-  const audit: AuditResult = execution.audit;
-  const { mem, disk, uptime, procs, cpu, crashes } = execution.snapshot;
+  return maintenanceFromSnapshot(execution.snapshot, sampledAt, execution.audit);
+}
+
+/** Admission needs live headroom, not repository, GPU or workspace scoring. */
+export function buildAdmissionMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
+  const sampledAt = new Date().toISOString();
+  const snapshot = {
+    mem: probeMemory(),
+    cpu: probeCpu(),
+    disk: probeDisk(cwd),
+    procs: probeProcesses(),
+    uptime: probeUptime(),
+    crashes: probeCrashLoops(),
+  };
+  return maintenanceFromSnapshot(snapshot, sampledAt);
+}
+
+function maintenanceFromSnapshot(
+  snapshot: Pick<AuditProbeSnapshot, 'mem' | 'disk' | 'uptime' | 'procs' | 'cpu' | 'crashes'>,
+  sampledAt: string,
+  audit?: Pick<AuditResult, 'totalScore' | 'grade'>,
+): MaintenancePlan {
+  const { mem, disk, uptime, procs, cpu, crashes } = snapshot;
   const memoryKnown = Number.isFinite(mem.totalMB) && mem.totalMB > 0 && Number.isFinite(mem.freeMB) && mem.freeMB >= 0 && mem.freeMB <= mem.totalMB && Number.isFinite(mem.usedPct) && mem.usedPct >= 0 && mem.usedPct <= 100;
   const diskKnown = Number.isFinite(disk.totalGB) && disk.totalGB > 0 && Number.isFinite(disk.freeGB) && disk.freeGB >= 0 && disk.freeGB <= disk.totalGB && Number.isFinite(disk.usedPct) && disk.usedPct >= 0 && disk.usedPct <= 100;
   const probeEvidence: NonNullable<MaintenancePlan['probeEvidence']> = { sampledAt, memory: memoryKnown ? 'measured' : 'unknown', disk: diskKnown ? 'measured' : 'unknown', cpu: cpu.status ?? 'unknown', processes: procs.status ?? 'unknown', crashes: crashes.status ?? 'unknown' };
@@ -149,8 +172,8 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
   if (buildCount > 0) reasons.push(`${buildCount} build/generator processes are reviewable and require receipts before termination.`);
 
   const metrics = {
-    score: audit.totalScore,
-    grade: audit.grade,
+    score: audit?.totalScore ?? null,
+    grade: audit?.grade ?? 'UNKNOWN',
     ramUsedPct: mem.usedPct,
     ramFreeMB: mem.freeMB,
     diskFreeGB: disk.freeGB,
@@ -287,7 +310,7 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
     });
   }
 
-  const summary = `${posture} maintenance posture; ${swarmPosture} swarm posture; score ${audit.totalScore ?? 'Unknown'}/${audit.grade}.`;
+  const summary = `${posture} maintenance posture; ${swarmPosture} swarm posture; ${audit ? `score ${audit.totalScore ?? 'Unknown'}/${audit.grade}` : 'Ten Gate score not collected'}.`;
 
   return {
     probeEvidence,
