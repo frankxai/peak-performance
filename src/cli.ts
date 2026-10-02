@@ -126,9 +126,9 @@ switch (command) {
     // Re-audit after fixes
     console.log('\n  Re-auditing...\n');
     const after = runAudit({ cwd: process.cwd() });
-    const delta = after.totalScore - audit.totalScore;
-    const color = delta > 0 ? '\x1b[32m' : '\x1b[90m';
-    console.log(`  Before: ${audit.totalScore}/${audit.grade} → After: ${color}${after.totalScore}/${after.grade}\x1b[0m (+${delta} points)\n`);
+    const delta = after.totalScore === null || audit.totalScore === null ? null : after.totalScore - audit.totalScore;
+    const color = delta !== null && delta > 0 ? '\x1b[32m' : '\x1b[90m';
+    console.log(`  Before: ${audit.totalScore ?? 'Unknown'}/${audit.grade} → After: ${color}${after.totalScore ?? 'Unknown'}/${after.grade}\x1b[0m (${delta === null ? 'change unknown; incomplete evidence' : `${delta >= 0 ? '+' : ''}${delta} points`})\n`);
     break;
   }
 

@@ -15,7 +15,7 @@ function evaluatePreflight(maintenance: MaintenancePlan, workload: Parameters<ty
 function maintenance(overrides: Partial<MaintenancePlan['metrics']> = {}, posture: MaintenancePlan['posture'] = 'green'): MaintenancePlan {
   return {
     timestamp: '2026-07-11T00:00:00.000Z',
-    probeEvidence: { sampledAt: new Date().toISOString(), cpu: 'measured', processes: 'measured', crashes: 'measured' },
+    probeEvidence: { sampledAt: new Date().toISOString(), memory: 'measured', disk: 'measured', cpu: 'measured', processes: 'measured', crashes: 'measured' },
     hostname: 'test-host',
     posture,
     swarmPosture: posture === 'green' ? 'expand' : posture === 'watch' ? 'steady' : posture === 'constrain' ? 'pause-new-swarms' : 'drain-and-handoff',
@@ -55,6 +55,18 @@ function maintenance(overrides: Partial<MaintenancePlan['metrics']> = {}, postur
     relatedWorkItems: [],
   };
 }
+
+test('unknown or missing capacity evidence holds reserved work while ordinary reading remains available', () => {
+  for (const key of ['memory', 'disk'] as const) {
+    for (const status of ['unknown', undefined] as const) {
+      const plan = maintenance();
+      if (status === undefined) delete (plan.probeEvidence as Partial<NonNullable<MaintenancePlan['probeEvidence']>>)[key];
+      else plan.probeEvidence![key] = status;
+      assert.equal(evaluatePreflight(plan, 'review-lite', 2048).decision, 'hold');
+      assert.equal(evaluatePreflight(plan, 'interactive', 0).decision, 'allow');
+    }
+  }
+});
 
 test('storage floors bind the reproduced model/swarm/overnight/build cases independently of RAM', () => {
   for (const free of [3, 5, 10, 15]) for (const workload of ['build', 'local-model', 'swarm', 'overnight'] as const) {

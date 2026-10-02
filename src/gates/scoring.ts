@@ -17,8 +17,21 @@ function status(score: number): GateScore['status'] {
   return 'CRIT';
 }
 
+function unknown(id: GateId, detail: string): GateScore {
+  return { id, score: null, status: 'UNKNOWN', detail, metrics: { evidence: 'unknown' } };
+}
+
+function validMemory(mem: MemoryInfo): boolean {
+  return Number.isFinite(mem.totalMB) && mem.totalMB > 0 && Number.isFinite(mem.freeMB) && mem.freeMB >= 0 && mem.freeMB <= mem.totalMB && Number.isFinite(mem.usedPct) && mem.usedPct >= 0 && mem.usedPct <= 100;
+}
+
+function validDisk(disk: DiskInfo): boolean {
+  return Number.isFinite(disk.totalGB) && disk.totalGB > 0 && Number.isFinite(disk.freeGB) && disk.freeGB >= 0 && disk.freeGB <= disk.totalGB && Number.isFinite(disk.usedPct) && disk.usedPct >= 0 && disk.usedPct <= 100;
+}
+
 // ─── Foundation (Disk) ──────────────────────────────────────────
 export function scoreDisk(disk: DiskInfo): GateScore {
+  if (!validDisk(disk)) return unknown('disk', 'Disk capacity is unknown; invalid or failed filesystem evidence.');
   const recs: Recommendation[] = [];
   let score = 10;
 
@@ -38,6 +51,7 @@ export function scoreDisk(disk: DiskInfo): GateScore {
 
 // ─── Flow (Memory) ──────────────────────────────────────────────
 export function scoreMemory(mem: MemoryInfo): GateScore {
+  if (!validMemory(mem)) return unknown('memory', 'Memory capacity is unknown; invalid memory evidence.');
   let score = 10;
 
   if (mem.usedPct > 95) score = 1;
@@ -57,6 +71,7 @@ export function scoreMemory(mem: MemoryInfo): GateScore {
 
 // ─── Fire (CPU + GPU) ───────────────────────────────────────────
 export function scoreCpuGpu(cpu: CpuInfo, gpu: GpuInfo | null): GateScore {
+  if (cpu.status !== 'measured' || ![cpu.loadPct, cpu.systemLoadPct].every(value => Number.isFinite(value) && value >= 0 && value <= 100) || cpu.systemLoadPct > cpu.loadPct) return unknown('cpu', 'CPU utilization is unknown; a measured valid sample is required.');
   let score = 10;
   let detail = `${cpu.model} (${cpu.logicalCores} threads) | CPU ${cpu.loadPct}% (${cpu.systemLoadPct}% system)`;
 
@@ -97,6 +112,9 @@ export function scoreCpuGpu(cpu: CpuInfo, gpu: GpuInfo | null): GateScore {
 
 // ─── Heart (Process Health) ─────────────────────────────────────
 export function scoreProcesses(procs: ProcessInfo, crashes: CrashLoopInfo = { windowMinutes: 15, totalCrashes: 0, topApp: '', topAppCrashes: 0, apps: [] }): GateScore {
+  if (procs.status !== 'measured' || crashes.status !== 'measured'
+    || ![procs.claudeCount, procs.cursorCount, procs.codexCount, procs.nodeCount, procs.codexTaskRuntimeCount, procs.duplicateMcpProcesses, procs.totalProcesses, crashes.totalCrashes, crashes.topAppCrashes].every(value => Number.isInteger(value) && value >= 0)
+    || crashes.topAppCrashes > crashes.totalCrashes) return unknown('processes', 'Process or crash evidence is unknown; incomplete collection cannot establish health.');
   let score = 10;
   const namedAgents = procs.claudeCount + procs.cursorCount + procs.codexCount;
   const logicalRuntimes = Math.max(namedAgents, procs.codexTaskRuntimeCount);
@@ -265,6 +283,7 @@ export function scoreKnowledge(cwd: string): GateScore {
 
 // ─── Unity (Agent Load) ─────────────────────────────────────────
 export function scoreAgentLoad(mem: MemoryInfo, procs: ProcessInfo): GateScore {
+  if (!validMemory(mem) || procs.status !== 'measured' || !Number.isFinite(procs.agentTreeMemoryMB) || procs.agentTreeMemoryMB < 0 || ![procs.claudeCount, procs.cursorCount, procs.codexCount, procs.codexTaskRuntimeCount].every(value => Number.isInteger(value) && value >= 0)) return unknown('agents', 'Agent footprint is unknown; complete process and memory evidence is required.');
   let score = 10;
   const agents = procs.claudeCount + procs.cursorCount + procs.codexCount;
 
@@ -295,6 +314,7 @@ export function scoreAgentLoad(mem: MemoryInfo, procs: ProcessInfo): GateScore {
 
 // ─── Source (System Overall) ────────────────────────────────────
 export function scoreSystem(disk: DiskInfo, mem: MemoryInfo, uptimeHours: number): GateScore {
+  if (!validDisk(disk) || !validMemory(mem) || !Number.isFinite(uptimeHours) || uptimeHours < 0) return unknown('system', 'System health is unknown; invalid capacity or uptime evidence.');
   let score = 10;
 
   // Composite health
@@ -317,7 +337,8 @@ export function scoreSystem(disk: DiskInfo, mem: MemoryInfo, uptimeHours: number
 }
 
 // ─── GRADE ──────────────────────────────────────────────────────
-export function grade(score: number): string {
+export function grade(score: number | null): string {
+  if (score === null || !Number.isFinite(score) || score < 0 || score > 100) return 'UNKNOWN';
   if (score >= 95) return 'S';
   if (score >= 90) return 'A+';
   if (score >= 85) return 'A';

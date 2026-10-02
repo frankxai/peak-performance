@@ -51,6 +51,15 @@ export function runAuditWithProbes(config: Partial<PPConfig> = {}): AuditExecuti
   const uptime = probeUptime();
   const crashes = probeCrashLoops();
 
+  const snapshot = { mem, cpu, disk, gpu, procs, git, secrets, temp, uptime, crashes };
+  return { audit: scoreAuditSnapshot(snapshot, cfg), snapshot };
+}
+
+/** Score one collected snapshot without rerunning machine probes. */
+export function scoreAuditSnapshot(snapshot: AuditProbeSnapshot, config: Partial<PPConfig> = {}): AuditResult {
+  const cfg = { ...DEFAULT_CONFIG, ...config };
+  const { mem, cpu, disk, gpu, procs, git, secrets, temp, uptime, crashes } = snapshot;
+
   // Score all gates
   const gates = [
     scoreDisk(disk),
@@ -65,10 +74,13 @@ export function runAuditWithProbes(config: Partial<PPConfig> = {}): AuditExecuti
     scoreSystem(disk, mem, uptime.uptimeHours),
   ];
 
-  const rawScore = gates.reduce((sum, g) => sum + g.score, 0);
+  const unknownGates = gates.filter(g => g.score === null || g.status === 'UNKNOWN');
+  const rawScore = unknownGates.length ? null : gates.reduce((sum, g) => sum + (g.score ?? 0), 0);
   const scoreCaps: string[] = [];
   let totalScore = rawScore;
-  if (crashes.topAppCrashes >= 10) {
+  if (totalScore === null) {
+    scoreCaps.push(`Incomplete probe evidence: ${unknownGates.map(g => g.id).join(', ')}`);
+  } else if (crashes.topAppCrashes >= 10) {
     totalScore = Math.min(totalScore, 49);
     scoreCaps.push(`${crashes.topApp} crashed ${crashes.topAppCrashes} times in ${crashes.windowMinutes} minutes`);
   } else if (gates.some(gate => gate.status === 'CRIT')) {
@@ -79,7 +91,7 @@ export function runAuditWithProbes(config: Partial<PPConfig> = {}): AuditExecuti
   // Collect recommendations
   const recommendations: Recommendation[] = [];
 
-  if (disk.freeGB < 20) {
+  if (gates.find(g => g.id === 'disk')?.score !== null && disk.freeGB < 20) {
     recommendations.push({
       priority: 'urgent', gate: 'disk',
       message: `Only ${disk.freeGB}GB disk free — run: npm cache clean --force`,
@@ -88,7 +100,7 @@ export function runAuditWithProbes(config: Partial<PPConfig> = {}): AuditExecuti
     });
   }
 
-  if (mem.usedPct > 85) {
+  if (gates.find(g => g.id === 'memory')?.score !== null && mem.usedPct > 85) {
     recommendations.push({
       priority: 'high', gate: 'memory',
       message: `RAM at ${mem.usedPct}% — close unused apps`,
@@ -96,7 +108,7 @@ export function runAuditWithProbes(config: Partial<PPConfig> = {}): AuditExecuti
     });
   }
 
-  if (cpu.loadPct > 80 || cpu.systemLoadPct > 40) {
+  if (cpu.status === 'measured' && (cpu.loadPct > 80 || cpu.systemLoadPct > 40)) {
     recommendations.push({
       priority: 'high', gate: 'cpu',
       message: `CPU is ${cpu.loadPct}% busy (${cpu.systemLoadPct}% kernel/interrupt); inspect active process and I/O pressure before launching more work`,
@@ -177,10 +189,7 @@ export function runAuditWithProbes(config: Partial<PPConfig> = {}): AuditExecuti
     recommendations,
   };
 
-  return {
-    audit,
-    snapshot: { mem, cpu, disk, gpu, procs, git, secrets, temp, uptime, crashes },
-  };
+  return audit;
 }
 
 export function runAudit(config: Partial<PPConfig> = {}): AuditResult {

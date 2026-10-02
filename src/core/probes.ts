@@ -100,13 +100,15 @@ export function probeCpu(): CpuInfo {
       return !Number.isFinite(start[k]) || !Number.isFinite(end[k]) || end[k] < start[k];
     })) valid = false;
     const idle = Math.max(0, end.idle - start.idle);
-    const system = Math.max(0, end.sys - start.sys) + Math.max(0, end.irq - start.irq);
+    // Windows kernel busy time already contains interrupt time (libuv util.c).
+    const irq = os.platform() === 'win32' ? 0 : Math.max(0, end.irq - start.irq);
+    const system = Math.max(0, end.sys - start.sys) + irq;
     const total = Math.max(0,
       (end.user - start.user) +
       (end.nice - start.nice) +
       (end.sys - start.sys) +
       (end.idle - start.idle) +
-      (end.irq - start.irq)
+      irq
     );
     idleDelta += idle;
     systemDelta += system;
@@ -578,7 +580,7 @@ function probeWindowsProcesses(info: ProcessInfo): boolean {
     if (!Number.isInteger(Number(row.ProcessId)) || Number(row.ProcessId) < 0 || !Number.isInteger(Number(row.ParentProcessId)) || Number(row.ParentProcessId) < 0 || !Number.isFinite(Number(row.WorkingSetSize)) || Number(row.WorkingSetSize) < 0) info.status = 'unknown';
     // Protected OS processes commonly deny CommandLine. Missing command data
     // for runtimes that can host agents/MCP/builds cannot establish headroom.
-    if (/^(node|python[\d.]*|bun|deno|uv|npx|cmd|bash|sh|railway|claude|codex)(\.exe|\.cmd)?$/i.test(name) && (typeof row.CommandLine !== 'string' || !row.CommandLine.trim())) info.status = 'unknown';
+    if (/^(node|node_repl|pythonw?[\d.]*|bun|deno|uvx?|npx|cmd|powershell|pwsh|bash|sh|railway|headroom|claude|codex)(\.exe|\.cmd)?$/i.test(name) && (typeof row.CommandLine !== 'string' || !row.CommandLine.trim())) info.status = 'unknown';
 
     addProcessCounts(info, name);
 
@@ -653,7 +655,7 @@ export function probeProcesses(): ProcessInfo {
       if (!match) { info.status = 'unknown'; continue; }
       const [, pid, ppid, rssKB, comm, args] = match;
       const name = comm.split('/').pop() ?? comm;
-      if (/^(node|python[\d.]*|bun|deno|uv|npx|bash|sh|claude|codex)$/i.test(name) && !args.trim()) info.status = 'unknown';
+      if (/^(node|node_repl|pythonw?[\d.]*|bun|deno|uvx?|npx|bash|sh|railway|headroom|claude|codex)$/i.test(name) && !args.trim()) info.status = 'unknown';
       const command = redactCommandLine(args || comm);
       addProcessCounts(info, name);
       const classification = classifyProcess(name, command);

@@ -22,6 +22,8 @@ export interface MaintenanceAction {
 export interface MaintenancePlan {
   probeEvidence?: {
     sampledAt: string;
+    memory: 'measured' | 'unknown';
+    disk: 'measured' | 'unknown';
     cpu: 'measured' | 'unknown';
     processes: 'measured' | 'unknown';
     crashes: 'measured' | 'unknown' | 'unsupported';
@@ -32,7 +34,7 @@ export interface MaintenancePlan {
   swarmPosture: SwarmPosture;
   summary: string;
   metrics: {
-    score: number;
+    score: number | null;
     grade: string;
     ramUsedPct: number;
     ramFreeMB: number;
@@ -78,12 +80,15 @@ function roleCount(procs: ProcessInfo, role: ProcessRole): number {
   return procs.processes.filter(proc => proc.role === role).length;
 }
 
-function choosePosture(plan: Pick<MaintenancePlan, 'metrics' | 'reasons'>): MaintenancePosture {
+function choosePosture(plan: Pick<MaintenancePlan, 'metrics' | 'reasons' | 'probeEvidence'>): MaintenancePosture {
   const m = plan.metrics;
-  if (m.ramUsedPct >= 94 || m.ramFreeMB < 2_000 || (m.uptimeHours > 168 && m.ramUsedPct >= 82)) return 'restart-soon';
-  if (m.diskFreeGB < 20 || m.ramUsedPct >= 88 || m.totalProcesses > 850 || m.nodeCount > 140 || m.crashLoopCount >= 10 || m.cpuLoadPct >= 95) return 'maintenance';
-  if (m.ramUsedPct >= 82 || m.totalProcesses > 700 || m.nodeCount > 90 || m.namedAgentCount > 25 || m.codexTaskRuntimeCount > 8 || m.duplicateMcpProcesses > 20 || m.mcpMemoryMB > 4_096 || m.cpuLoadPct >= 70 || m.cpuSystemLoadPct >= 35) return 'constrain';
-  if (m.ramUsedPct >= 72 || m.uptimeHours > 72 || m.nodeCount > 60 || m.namedAgentCount > 12 || m.codexTaskRuntimeCount > 4 || m.cpuLoadPct >= 55) return 'watch';
+  const e = plan.probeEvidence;
+  const memory = e?.memory === 'measured', disk = e?.disk === 'measured';
+  const cpu = e?.cpu === 'measured', processes = e?.processes === 'measured', crashes = e?.crashes === 'measured';
+  if (memory && (m.ramUsedPct >= 94 || m.ramFreeMB < 2_000 || (m.uptimeHours > 168 && m.ramUsedPct >= 82))) return 'restart-soon';
+  if ((disk && m.diskFreeGB < 20) || (memory && m.ramUsedPct >= 88) || (processes && (m.totalProcesses > 850 || m.nodeCount > 140)) || (crashes && m.crashLoopCount >= 10) || (cpu && m.cpuLoadPct >= 95)) return 'maintenance';
+  if ((memory && m.ramUsedPct >= 82) || (processes && (m.totalProcesses > 700 || m.nodeCount > 90 || m.namedAgentCount > 25 || m.codexTaskRuntimeCount > 8 || m.duplicateMcpProcesses > 20 || m.mcpMemoryMB > 4_096)) || (cpu && (m.cpuLoadPct >= 70 || m.cpuSystemLoadPct >= 35))) return 'constrain';
+  if ((memory && m.ramUsedPct >= 72) || m.uptimeHours > 72 || (processes && (m.nodeCount > 60 || m.namedAgentCount > 12 || m.codexTaskRuntimeCount > 4)) || (cpu && m.cpuLoadPct >= 55)) return 'watch';
   return 'green';
 }
 
@@ -107,8 +112,10 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
   const execution = runAuditWithProbes({ cwd });
   const audit: AuditResult = execution.audit;
   const { mem, disk, uptime, procs, cpu, crashes } = execution.snapshot;
-  const probeEvidence: NonNullable<MaintenancePlan['probeEvidence']> = { sampledAt, cpu: cpu.status ?? 'unknown', processes: procs.status ?? 'unknown', crashes: crashes.status ?? 'unknown' };
-  const unknownProbes = (['cpu', 'processes', 'crashes'] as const).filter(key => probeEvidence[key] !== 'measured');
+  const memoryKnown = Number.isFinite(mem.totalMB) && mem.totalMB > 0 && Number.isFinite(mem.freeMB) && mem.freeMB >= 0 && mem.freeMB <= mem.totalMB && Number.isFinite(mem.usedPct) && mem.usedPct >= 0 && mem.usedPct <= 100;
+  const diskKnown = Number.isFinite(disk.totalGB) && disk.totalGB > 0 && Number.isFinite(disk.freeGB) && disk.freeGB >= 0 && disk.freeGB <= disk.totalGB && Number.isFinite(disk.usedPct) && disk.usedPct >= 0 && disk.usedPct <= 100;
+  const probeEvidence: NonNullable<MaintenancePlan['probeEvidence']> = { sampledAt, memory: memoryKnown ? 'measured' : 'unknown', disk: diskKnown ? 'measured' : 'unknown', cpu: cpu.status ?? 'unknown', processes: procs.status ?? 'unknown', crashes: crashes.status ?? 'unknown' };
+  const unknownProbes = (['memory', 'disk', 'cpu', 'processes', 'crashes'] as const).filter(key => probeEvidence[key] !== 'measured');
   const namedAgentCount = procs.claudeCount + procs.cursorCount + procs.codexCount;
   const aiProcessCount = roleCount(procs, 'ai-agent');
   const localModelCount = roleCount(procs, 'local-model');
@@ -119,11 +126,13 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
 
   const reasons: string[] = [];
   if (unknownProbes.length) reasons.push(`Headroom is unknown for ${unknownProbes.join(', ')}; failed, partial or unsupported probes do not establish clear capacity.`);
-  if (mem.usedPct >= 88) reasons.push(`RAM is high at ${mem.usedPct}% used (${mem.freeMB}MB free).`);
+  if (!memoryKnown) reasons.push('RAM capacity is unknown.');
+  else if (mem.usedPct >= 88) reasons.push(`RAM is high at ${mem.usedPct}% used (${mem.freeMB}MB free).`);
   else if (mem.usedPct >= 82) reasons.push(`RAM is elevated at ${mem.usedPct}% used; avoid launching large swarms until pressure drops.`);
   else reasons.push(`RAM is workable at ${mem.usedPct}% used (${mem.freeMB}MB free).`);
 
-  if (disk.freeGB < 20) reasons.push(`Disk is critical at ${disk.freeGB}GB free.`);
+  if (!diskKnown) reasons.push('Disk capacity is unknown.');
+  else if (disk.freeGB < 20) reasons.push(`Disk is critical at ${disk.freeGB}GB free.`);
   else reasons.push(`Disk has ${disk.freeGB}GB free.`);
 
   if (uptime.uptimeHours > 168) reasons.push(`Uptime is ${uptime.uptimeHours}h; schedule a restart after handoff.`);
@@ -167,7 +176,7 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
     crashLoopCount: crashes.topAppCrashes,
   };
 
-  const observedPosture = choosePosture({ metrics, reasons });
+  const observedPosture = choosePosture({ metrics, reasons, probeEvidence });
   const posture = unknownProbes.length && ['green', 'watch'].includes(observedPosture) ? 'constrain' : observedPosture;
   const swarmPosture = swarmPostureFor(posture);
   const actions: MaintenanceAction[] = [];
@@ -250,7 +259,7 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
     });
   }
 
-  if (mem.usedPct >= 88 || posture === 'restart-soon') {
+  if ((memoryKnown && mem.usedPct >= 88) || posture === 'restart-soon') {
     addAction(actions, {
       id: 'handoff-before-restart',
       priority: posture === 'restart-soon' ? 'now' : 'next',
@@ -264,7 +273,7 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
     });
   }
 
-  if (disk.freeGB < 50) {
+  if (diskKnown && disk.freeGB < 50) {
     addAction(actions, {
       id: 'safe-cache-cleanup',
       priority: disk.freeGB < 20 ? 'now' : 'next',
@@ -278,7 +287,7 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
     });
   }
 
-  const summary = `${posture} maintenance posture; ${swarmPosture} swarm posture; score ${audit.totalScore}/${audit.grade}.`;
+  const summary = `${posture} maintenance posture; ${swarmPosture} swarm posture; score ${audit.totalScore ?? 'Unknown'}/${audit.grade}.`;
 
   return {
     probeEvidence,

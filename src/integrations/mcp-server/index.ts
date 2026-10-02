@@ -205,7 +205,7 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
           const delta = tracker.getDelta();
 
           let text = entries.map(e =>
-            `${e.timestamp.slice(0, 16)} — ${e.score}/100 ${e.grade}${e.trigger ? ` (${e.trigger})` : ''}`
+            `${e.timestamp.slice(0, 16)} — ${e.score === null ? 'Unknown' : `${e.score}/100`} ${e.grade}${e.trigger ? ` (${e.trigger})` : ''}`
           ).join('\n');
 
           if (delta) {
@@ -230,12 +230,13 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
 
           const results = runAllFixes(before.recommendations);
           const after = runAudit({ cwd: process.cwd() });
+          const delta = after.totalScore === null || before.totalScore === null ? null : after.totalScore - before.totalScore;
 
           const text = [
             `Fixed ${results.filter(r => r.success).length}/${results.length} issues`,
-            `Before: ${before.totalScore}/${before.grade}`,
-            `After: ${after.totalScore}/${after.grade}`,
-            `Delta: ${after.totalScore - before.totalScore > 0 ? '+' : ''}${after.totalScore - before.totalScore} points`,
+            `Before: ${before.totalScore ?? 'Unknown'}/${before.grade}`,
+            `After: ${after.totalScore ?? 'Unknown'}/${after.grade}`,
+            `Delta: ${delta === null ? 'unknown; incomplete evidence' : `${delta > 0 ? '+' : ''}${delta} points`}`,
           ].join('\n');
 
           respond(id, { content: [{ type: 'text', text }] });

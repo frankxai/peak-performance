@@ -81,9 +81,9 @@ test('actual host crash collector returns measured Windows or explicit unsupport
 test('positive CPU delta is measured and reports actual busy time', () => {
   const p = mock.method(os, 'platform', () => 'win32');
   try {
-    for (const [user, sys, idle, load, system] of [[20, 0, 0, 100, 0], [0, 1, 199, 1, 1]]) {
+    for (const [user, sys, idle, load, system] of [[20, 0, 0, 100, 0], [0, 1, 199, 1, 1], [20, 10, 70, 30, 10]]) {
       let calls = 0;
-      const c = mock.method(os, 'cpus', () => [{ model: 'fixture', speed: 1, times: { user: ++calls >= 3 ? user : 0, nice: 0, sys: calls >= 3 ? sys : 0, idle: calls >= 3 ? idle : 0, irq: 0 } }]);
+      const c = mock.method(os, 'cpus', () => [{ model: 'fixture', speed: 1, times: { user: ++calls >= 3 ? user : 0, nice: 0, sys: calls >= 3 ? sys : 0, idle: calls >= 3 ? idle : 0, irq: calls >= 3 && sys === 10 ? 5 : 0 } }]);
       try {
         const result = probeCpu();
         assert.equal(result.status, 'measured');

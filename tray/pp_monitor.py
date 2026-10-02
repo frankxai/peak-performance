@@ -4,6 +4,9 @@ Python port of core/probes.ts. Each probe returns raw metrics.
 """
 
 import os
+import json
+import math
+from collections import Counter
 import re
 import subprocess
 import time
@@ -32,30 +35,51 @@ def _run(cmd: str, timeout: int = 10) -> str:
 
 def probe_memory() -> dict:
     vm = psutil.virtual_memory()
-    total_mb = round(vm.total / 1024 / 1024)
-    free_mb = round(vm.available / 1024 / 1024)
-    used_pct = round((1 - free_mb / total_mb) * 100) if total_mb > 0 else 0
+    total_mb = math.floor(vm.total / 1024 / 1024 + 0.5)
+    free_mb = math.floor(vm.available / 1024 / 1024 + 0.5)
+    used_pct = math.floor((1 - free_mb / total_mb) * 100 + 0.5) if total_mb > 0 else 0
     return {'totalMB': total_mb, 'freeMB': free_mb, 'usedPct': used_pct}
 
 
 # ─── CPU ────────────────────────────────────────────────────────
 
+def _cpu_delta(before, after, windows):
+    """Use the same counters as Node os.cpus; Windows system includes IRQ/DPC."""
+    if not before or len(before) != len(after):
+        return None
+    idle = total = system = 0.0
+    for start, end in zip(before, after):
+        def counters(row):
+            return [row.user, getattr(row, 'nice', 0), row.system, row.idle,
+                    getattr(row, 'irq', getattr(row, 'interrupt', 0))]
+        a, b = counters(start), counters(end)
+        if any(not math.isfinite(x) or x < 0 for x in a + b) or any(y < x for x, y in zip(a, b)):
+            return None
+        user, nice, sys, rest, irq = [y - x for x, y in zip(a, b)]
+        irq = 0 if windows else irq
+        total += user + nice + sys + rest + irq
+        idle += rest
+        system += sys + irq
+    if total <= 0:
+        return None
+    return (math.floor((total - idle) / total * 100 + 0.5),
+            math.floor(system / total * 100 + 0.5))
+
+
 def probe_cpu() -> dict:
-    freq = psutil.cpu_freq()
-    load_avg = psutil.cpu_percent(interval=0.5)
-    logical = psutil.cpu_count(logical=True) or 1
-    physical = psutil.cpu_count(logical=False) or 1
-
-    # Approximate 1-minute load average equivalent from cpu_percent
-    # On Windows, os.getloadavg() doesn't exist, so we use cpu_percent / 100 * cores
-    load_1m = round(load_avg / 100 * logical, 2)
-
-    return {
-        'model': f'{physical}C/{logical}T @ {round(freq.max)}MHz' if freq else f'{physical}C/{logical}T',
-        'cores': physical,
-        'logicalCores': logical,
-        'loadAvg1m': load_1m,
-    }
+    result = {'status': 'unknown', 'model': 'unknown', 'cores': 0, 'logicalCores': 0,
+              'loadPct': 0, 'systemLoadPct': 0, 'sampleMs': 350}
+    try:
+        before = psutil.cpu_times(percpu=True)
+        time.sleep(0.350)
+        after = psutil.cpu_times(percpu=True)
+        sample = _cpu_delta(before, after, os.name == 'nt')
+        result.update(cores=psutil.cpu_count(logical=False) or 0, logicalCores=len(after))
+        if sample is not None:
+            result.update(status='measured', loadPct=sample[0], systemLoadPct=sample[1])
+    except (OSError, ValueError, TypeError, AttributeError, psutil.Error):
+        pass
+    return result
 
 
 # ─── DISK ───────────────────────────────────────────────────────
@@ -69,9 +93,9 @@ def probe_disk(cwd: str) -> dict:
 
     try:
         usage = psutil.disk_usage(drive)
-        total_gb = round(usage.total / 1024 / 1024 / 1024, 1)
-        free_gb = round(usage.free / 1024 / 1024 / 1024, 1)
-        used_pct = round(usage.percent)
+        total_gb = math.floor(usage.total / 1024 / 1024 / 1024 * 10 + 0.5) / 10
+        free_gb = math.floor(usage.free / 1024 / 1024 / 1024 * 10 + 0.5) / 10
+        used_pct = math.floor(usage.percent + 0.5)
         return {'drive': drive, 'totalGB': total_gb, 'freeGB': free_gb, 'usedPct': used_pct}
     except Exception:
         return {'drive': drive, 'totalGB': 0, 'freeGB': 0, 'usedPct': 0}
@@ -106,41 +130,145 @@ def probe_gpu() -> dict | None:
 
 # ─── PROCESSES ──────────────────────────────────────────────────
 
+_COMMAND_REQUIRED = re.compile(r'^(node|node_repl|pythonw?[\d.]*|bun|deno|uvx?|npx|cmd|powershell|pwsh|bash|sh|railway|headroom|claude|codex)(\.exe|\.cmd)?$', re.I)
+
+
+def _redact_command(command):
+    command = re.sub(r'(["\x27]?(?:api[_-]?key|token|secret|password|passwd|pwd|authorization)["\x27]?\s*:\s*["\x27])[^"\x27]+', r'\1[REDACTED]', command, flags=re.I)
+    command = re.sub(r'(api[_-]?key|token|secret|password|passwd|pwd|authorization)(=|\s+)[^\s"\x27]+', r'\1\2[REDACTED]', command, flags=re.I)
+    command = re.sub(r'(--(?:api-key|token|secret|password|authorization)\s+)[^\s"\x27]+', r'\1[REDACTED]', command, flags=re.I)
+    return re.sub(r'(Bearer\s+)[A-Za-z0-9._~+/=-]+', r'\1[REDACTED]', command, flags=re.I)
+
+
+def _metric_role(name, command):
+    # Classifications needed by the scorer; no command lines leave this probe.
+    n, cmd = name.lower(), command.lower()
+    if ('antigravity' in n or 'antigravity' in cmd
+            or n in {'claude', 'claude.exe', 'codex', 'codex.exe', 'cursor', 'cursor.exe'}
+            or n in {'node_repl', 'node_repl.exe'} and 'openai' in cmd and 'codex' in cmd):
+        return 'ai-agent'
+    if ('lmstudio' in n or 'llmster' in n or '.lmstudio' in cmd or n in {'ollama', 'ollama.exe'}
+            or n in {'code', 'code.exe', 'chrome', 'chrome.exe', 'msedge', 'msedge.exe'}):
+        return 'other'
+    if any(marker in cmd for marker in ['hermes_cli.main gateway run', 'hermes-cli', 'hermes gateway']):
+        return 'mcp'
+    hosts = {'node', 'python', 'pythonw', 'bun', 'deno', 'railway', 'cmd', 'bash', 'sh'}
+    host = n.removesuffix('.exe') in hosts
+    markers = ['modelcontextprotocol', 'agentic-ops/server.js --mcp', 'agentic-ops\\server.js --mcp',
+               'railway.js" mcp', "railway.js' mcp", 'railway.exe mcp', 'mcp-server.js',
+               'starlight-mcp.js', 'mcp-obsidian', '/packages/mcp/', '\\packages\\mcp\\', 'headroom mcp serve']
+    patterns = [r'(^|[\s\"\x27\\/])(mcp|mcp-server|mcpserver)([\s\"\x27\\/]|$)',
+                r'(^|[\s\"\x27\\/])(serve|server)\s+mcp([\s\"\x27]|$)',
+                r'(^|[\s\"\x27])(--mcp|-mcp)([\s\"\x27]|$)']
+    if host and (any(marker in cmd for marker in markers) or any(re.search(p, cmd) for p in patterns)):
+        return 'mcp'
+    return 'other'
+
+
+def _process_metrics(rows, complete=True):
+    counts = {k: 0 for k in ['totalProcesses', 'nodeCount', 'claudeCount', 'cursorCount', 'codexCount',
+                            'vscodeCount', 'edgeChromeTabs', 'codexTaskRuntimeCount', 'mcpCount',
+                            'mcpProcessCount', 'mcpMemoryMB', 'duplicateMcpProcesses', 'agentTreeMemoryMB']}
+    counts['status'] = 'measured' if rows and complete else 'unknown'
+    processes = []
+    pids = set()
+    for row in rows:
+        counts['totalProcesses'] += 1
+        name, command = row.get('name'), row.get('command')
+        pid, parent, memory = row.get('pid'), row.get('parentPid'), row.get('memMB')
+        valid = (isinstance(name, str) and bool(name)
+                 and isinstance(pid, int) and pid >= 0 and pid not in pids
+                 and isinstance(parent, int) and parent >= 0
+                 and isinstance(memory, (int, float)) and math.isfinite(memory) and memory >= 0)
+        if not valid:
+            counts['status'] = 'unknown'
+            continue
+        pids.add(pid)
+        if _COMMAND_REQUIRED.fullmatch(name) and (not isinstance(command, str) or not command.strip()):
+            counts['status'] = 'unknown'
+        n, command = name.lower(), _redact_command(command if isinstance(command, str) else name)
+        for key, names in [('nodeCount', {'node', 'node.exe'}), ('claudeCount', {'claude', 'claude.exe'}),
+                           ('cursorCount', {'cursor', 'cursor.exe'}), ('codexCount', {'codex', 'codex.exe'}),
+                           ('vscodeCount', {'code', 'code.exe'}), ('edgeChromeTabs', {'chrome', 'chrome.exe', 'msedge', 'msedge.exe'})]:
+            if n in names: counts[key] += 1
+        role = _metric_role(name, command)
+        mem = math.floor(memory * 10 + 0.5) / 10
+        processes.append(dict(pid=pid, parentPid=parent, name=n, command=command.lower(), role=role, memMB=mem))
+        if n in {'node_repl', 'node_repl.exe'} and 'openai' in command.lower() and 'codex' in command.lower():
+            counts['codexTaskRuntimeCount'] += 1
+    mcps = [p for p in processes if p['role'] == 'mcp']
+    counts['mcpProcessCount'] = len(mcps)
+    counts['mcpMemoryMB'] = math.floor(sum(p['memMB'] for p in mcps) * 10 + 0.5) / 10
+    mcp_ids = {p['pid'] for p in mcps}
+    parents = {p['parentPid'] for p in mcps if p['parentPid'] in mcp_ids}
+    leaves = [p for p in mcps if p['pid'] not in parents]
+    counts['mcpCount'] = len(leaves)
+    signatures = Counter(re.sub(r'\s+', ' ', p['command']).strip() for p in leaves)
+    counts['duplicateMcpProcesses'] = sum(n - 1 for n in signatures.values())
+    children = {}
+    for p in processes: children.setdefault(p['parentPid'], []).append(p['pid'])
+    queue = [p['pid'] for p in processes if p['role'] == 'ai-agent' and p['name'] not in {'node_repl', 'node_repl.exe'}]
+    visited = set()
+    while queue:
+        pid = queue.pop()
+        if pid in visited: continue
+        visited.add(pid)
+        queue.extend(children.get(pid, []))
+    counts['agentTreeMemoryMB'] = math.floor(sum(p['memMB'] for p in processes if p['pid'] in visited) * 10 + 0.5) / 10
+    return counts
+
+
 def probe_processes() -> dict:
-    info = {
-        'totalProcesses': 0,
-        'nodeCount': 0,
-        'claudeCount': 0,
-        'cursorCount': 0,
-        'codexCount': 0,
-        'vscodeCount': 0,
-        'edgeChromeTabs': 0,
-    }
-
+    rows, complete = [], True
     try:
-        for proc in psutil.process_iter(['name']):
-            info['totalProcesses'] += 1
+        for proc in psutil.process_iter(['pid', 'ppid', 'name', 'cmdline', 'memory_info'], ad_value=None):
             try:
-                name = (proc.info['name'] or '').lower()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
+                info = proc.info
+                args, memory = info.get('cmdline'), info.get('memory_info')
+                rows.append({'pid': info.get('pid'), 'parentPid': info.get('ppid'), 'name': info.get('name'),
+                             'command': ' '.join(args) if isinstance(args, list) and all(isinstance(a, str) for a in args) else None,
+                             'memMB': memory.rss / 1024 / 1024 if memory is not None else None})
+            except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError, TypeError):
+                complete = False
+    except (psutil.Error, OSError):
+        complete = False
+    return _process_metrics(rows, complete)
 
-            if 'node' in name:
-                info['nodeCount'] += 1
-            if 'claude' in name:
-                info['claudeCount'] += 1
-            if 'cursor' in name:
-                info['cursorCount'] += 1
-            if 'codex' in name:
-                info['codexCount'] += 1
-            if name == 'code.exe':
-                info['vscodeCount'] += 1
-            if 'msedge' in name or 'chrome' in name:
-                info['edgeChromeTabs'] += 1
-    except Exception:
-        pass
 
-    return info
+def probe_crashes(window_minutes=15):
+    window = max(1, min(120, round(window_minutes)))
+    empty = {'status': 'unknown' if os.name == 'nt' else 'unsupported', 'windowMinutes': window,
+             'totalCrashes': 0, 'topApp': '', 'topAppCrashes': 0, 'apps': []}
+    if os.name != 'nt': return empty
+    script = (
+        '$ErrorActionPreference = "Stop"; $events=@(); try { $events=@(Get-WinEvent -FilterHashtable '
+        '@{LogName="Application";ProviderName="Application Error";Id=1000;StartTime=(Get-Date).AddMinutes(-'
+        + str(window) + ')} -ErrorAction Stop) } catch { if ($_.FullyQualifiedErrorId -notlike "NoMatchingEventsFound*") { throw } }; '
+        '$apps=@(); foreach($event in $events) { $xml=[xml]$event.ToXml(); '
+        '$app=@($xml.Event.EventData.Data | Where-Object { $_.Name -eq "AppName" }); '
+        'if($app.Count -ne 1 -or [string]::IsNullOrWhiteSpace($app[0].InnerText)) { throw "Unrecognized crash event schema" }; '
+        '$apps+=$app[0].InnerText }; $groups=@($apps | Group-Object | Sort-Object Count -Descending | '
+        'Select-Object -First 10 @{n="name";e={$_.Name}},@{n="count";e={$_.Count}}); $top=$groups | Select-Object -First 1; '
+        '[pscustomobject]@{status="measured";totalCrashes=$apps.Count;topApp=if($top){$top.name}else{""};'
+        'topAppCrashes=if($top){$top.count}else{0};apps=$groups} | ConvertTo-Json -Compress -Depth 4'
+    )
+    try:
+        result = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', script],
+                                capture_output=True, text=True, timeout=8, encoding='utf-8', errors='replace',
+                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        if result.returncode != 0: return empty
+        data = json.loads(result.stdout)
+        integer = lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0
+        if (data.get('status') != 'measured' or not integer(data.get('totalCrashes'))
+                or not integer(data.get('topAppCrashes')) or data['topAppCrashes'] > data['totalCrashes']
+                or not isinstance(data.get('topApp'), str) or not isinstance(data.get('apps'), list)
+                or data['totalCrashes'] > 0 and (not data['topApp'] or not data['topAppCrashes'])
+                or any(not isinstance(a, dict) or not isinstance(a.get('name'), str) or not a['name']
+                       or not integer(a.get('count')) or a['count'] < 1 for a in data['apps'])):
+            return empty
+        return {**empty, **data, 'windowMinutes': window}
+    except (OSError, subprocess.TimeoutExpired, ValueError, AttributeError, TypeError):
+        return empty
 
 
 # ─── GIT ────────────────────────────────────────────────────────
@@ -279,6 +407,7 @@ def run_all_probes(cwd: str) -> dict:
         'disk': probe_disk(cwd),
         'gpu': probe_gpu(),
         'processes': probe_processes(),
+        'crashes': probe_crashes(),
         'git': probe_git(cwd),
         'secrets': probe_secrets(cwd),
         'temp': probe_temp(),

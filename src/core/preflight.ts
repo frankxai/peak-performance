@@ -251,8 +251,8 @@ export function evaluatePreflight(
   }
   if (requiresRamBudget) {
     const evidence = maintenance.probeEvidence;
-    if (!freshEvidence(evidence?.sampledAt) || evidence?.cpu !== 'measured' || evidence?.processes !== 'measured' || evidence?.crashes !== 'measured') {
-      addUnique(hardBlocks, 'CPU, process and crash evidence must be measured and fresh; failed, partial or unsupported probes cannot establish workload headroom.');
+    if (!freshEvidence(evidence?.sampledAt) || evidence?.memory !== 'measured' || evidence?.disk !== 'measured' || evidence?.cpu !== 'measured' || evidence?.processes !== 'measured' || evidence?.crashes !== 'measured') {
+      addUnique(hardBlocks, 'Memory, disk, CPU, process and crash evidence must be measured and fresh; failed, partial or unsupported probes cannot establish workload headroom.');
     }
     const m = maintenance.metrics;
     if (![m.ramUsedPct, m.cpuLoadPct, m.cpuSystemLoadPct].every(x => Number.isFinite(x) && x >= 0 && x <= 100)

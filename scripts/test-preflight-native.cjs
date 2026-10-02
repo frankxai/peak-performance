@@ -48,7 +48,7 @@ async function adapterTest() {
   let receive;
   const storageFixture = { sampledAt: new Date().toISOString(), readings: ['system', 'target', 'temp'].map(scope => ({ scope, status: 'measured', totalBytes: '100', availableBytes: '20' })) };
   const fixture = {
-    probeEvidence: { sampledAt: new Date().toISOString(), cpu: 'measured', processes: 'measured', crashes: 'measured' },
+    probeEvidence: { sampledAt: new Date().toISOString(), memory: 'measured', disk: 'measured', cpu: 'measured', processes: 'measured', crashes: 'measured' },
     hostname: 'fixture', posture: 'green', swarmPosture: 'expand',
     metrics: {
       ramFreeMB: 2_419, ramUsedPct: 50, cpuLoadPct: 20, cpuSystemLoadPct: 5,
@@ -115,7 +115,7 @@ async function maintenanceEvidenceTest() {
   const assert = require('node:assert/strict');
   const test = require('node:test');
   const snapshot = {
-    mem: { freeMB: 18000, usedPct: 45 }, disk: { freeGB: 200 }, uptime: { uptimeHours: 12 },
+    mem: { totalMB: 32768, freeMB: 18000, usedPct: 45 }, disk: { totalGB: 1000, freeGB: 200, usedPct: 80 }, uptime: { uptimeHours: 12 },
     cpu: { status: 'measured', loadPct: 20, systemLoadPct: 5 },
     crashes: { status: 'measured', topApp: '', topAppCrashes: 0, totalCrashes: 0, windowMinutes: 15 },
     procs: { status: 'measured', processes: [], totalProcesses: 100, nodeCount: 0, claudeCount: 0, cursorCount: 0, codexCount: 0, codexTaskRuntimeCount: 0, mcpCount: 0, mcpProcessCount: 0, mcpMemoryMB: 0, duplicateMcpProcesses: 0, agentTreeMemoryMB: 0 },
@@ -136,6 +136,16 @@ async function maintenanceEvidenceTest() {
       assert.equal(plan.swarmPosture, 'pause-new-swarms', key);
       assert.match(plan.reasons.join(' '), /Headroom is unknown/);
       snapshot[key].status = 'measured';
+    }
+    for (const key of ['mem', 'disk']) {
+      const totalKey = key === 'mem' ? 'totalMB' : 'totalGB';
+      const saved = snapshot[key][totalKey]; snapshot[key][totalKey] = 0;
+      const plan = maintenance.namespace.buildMaintenancePlan();
+      assert.notEqual(plan.swarmPosture, 'expand');
+      assert.match(plan.reasons.join(' '), /capacity is unknown/);
+      assert.doesNotMatch(plan.reasons.join(' '), key === 'mem' ? /RAM is workable/ : /Disk is critical/);
+      assert.ok(!plan.actions.some(action => action.id === 'safe-cache-cleanup'));
+      snapshot[key][totalKey] = saved;
     }
   });
 }

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { CrashLoopInfo, ProcessInfo } from '../core/probes.js';
-import { scoreCpuGpu, scoreProcesses } from './scoring.js';
+import { scoreCpuGpu, scoreProcesses, scoreAgentLoad, scoreMemory, scoreDisk, grade } from './scoring.js';
 
 function processInfo(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
   return {
+    status: 'measured',
     totalProcesses: 180,
     nodeCount: 6,
     claudeCount: 0,
@@ -26,6 +27,7 @@ function processInfo(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
 }
 
 const noCrashes: CrashLoopInfo = {
+  status: 'measured',
   windowMinutes: 15,
   totalCrashes: 0,
   topApp: '',
@@ -35,6 +37,7 @@ const noCrashes: CrashLoopInfo = {
 
 test('CPU gate treats kernel-heavy saturation as degraded', () => {
   const result = scoreCpuGpu({
+    status: 'measured',
     model: 'test',
     cores: 8,
     logicalCores: 16,
@@ -50,7 +53,8 @@ test('CPU gate treats kernel-heavy saturation as degraded', () => {
 
 test('process gate becomes critical for an application crash loop', () => {
   const crashes: CrashLoopInfo = {
-    windowMinutes: 15,
+    status: 'measured',
+  windowMinutes: 15,
     totalCrashes: 44,
     topApp: 'YB9.UserCenter.exe',
     topAppCrashes: 44,
@@ -85,4 +89,19 @@ test('healthy process footprint retains a perfect gate', () => {
   const result = scoreProcesses(processInfo(), noCrashes);
   assert.equal(result.score, 10);
   assert.equal(result.status, 'PERFECT');
+});
+
+test('unknown and invalid capacity never receive a numerical score or grade', () => {
+  const cpu = { status: 'unknown' as const, model: 'test', cores: 1, logicalCores: 1, loadPct: 0, systemLoadPct: 0, sampleMs: 350 };
+  assert.equal(scoreCpuGpu(cpu, null).score, null);
+  assert.equal(scoreCpuGpu({ ...cpu, status: 'measured', loadPct: 1, systemLoadPct: 2 }, null).status, 'UNKNOWN');
+  assert.equal(scoreProcesses(processInfo({ status: 'unknown' }), noCrashes).score, null);
+  assert.equal(scoreProcesses(processInfo(), { ...noCrashes, status: 'unsupported' }).score, null);
+  assert.equal(scoreProcesses(processInfo()).score, null);
+  const mem = { totalMB: 10000, freeMB: 5000, usedPct: 50 };
+  assert.equal(scoreAgentLoad(mem, processInfo({ status: 'unknown' })).score, null);
+  assert.equal(scoreAgentLoad(mem, processInfo({ claudeCount: 0.5 })).score, null);
+  assert.equal(scoreMemory({ ...mem, totalMB: 0 }).score, null);
+  assert.equal(scoreDisk({ drive: 'fixture', totalGB: 100, freeGB: 200, usedPct: 0 }).score, null);
+  for (const value of [null, NaN, -1, 101]) assert.equal(grade(value), 'UNKNOWN');
 });

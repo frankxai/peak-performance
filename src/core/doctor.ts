@@ -27,6 +27,12 @@ export interface DiagnosticAction {
 export function diagnose(audit: AuditResult): Diagnosis[] {
   const gateMap = new Map(audit.gates.map(g => [g.id, g]));
   const diagnoses: Diagnosis[] = [];
+  const unknown = audit.gates.filter(g => g.score === null || g.status === 'UNKNOWN');
+  if (unknown.length) diagnoses.push({
+    rootCause: 'Incomplete health evidence', affectedGates: unknown.map(g => g.id), severity: 'moderate',
+    explanation: 'Health is unknown for: ' + unknown.map(g => g.id).join(', ') + '. A failed or unsupported probe cannot establish capacity.',
+    actions: [{ action: 'Inspect failed collectors and visibility through their owner before admitting heavy work', estimatedImpact: 'Unknown until measured', effort: '5min' }],
+  });
 
   const disk = gateMap.get('disk');
   const mem = gateMap.get('memory');
@@ -37,7 +43,7 @@ export function diagnose(audit: AuditResult): Diagnosis[] {
 
   // Pattern: Agent overload cascade
   // Too many agents → RAM pressure → swap to disk → disk fills → everything degrades
-  if (agents && mem && agents.score <= 6 && mem.score <= 6) {
+  if (agents && mem && agents.score !== null && mem.score !== null && agents.score <= 6 && mem.score <= 6) {
     const agentCount = Number(agents.metrics['agents'] ?? 0);
     const estMB = Number(agents.metrics['estAgentMB'] ?? 0);
     diagnoses.push({
@@ -64,13 +70,13 @@ export function diagnose(audit: AuditResult): Diagnosis[] {
   }
 
   // Pattern: Disk pressure
-  if (disk && disk.score <= 4) {
+  if (disk && disk.score !== null && disk.score <= 4) {
     const freeGB = Number(disk.metrics['freeGB'] ?? 0);
     const actions: DiagnosticAction[] = [
       { action: 'Clean npm cache', estimatedImpact: '+2-5GB', effort: '1min', command: 'npm cache clean --force' },
     ];
 
-    if (workspace && workspace.score < 10) {
+    if (workspace && workspace.score !== null && workspace.score < 10) {
       const tempCount = Number(workspace.metrics['tempFiles'] ?? 0);
       if (tempCount > 5000) {
         actions.push({
@@ -99,7 +105,7 @@ export function diagnose(audit: AuditResult): Diagnosis[] {
   }
 
   // Pattern: Process bloat (orphan nodes)
-  if (procs && procs.score <= 5) {
+  if (procs && procs.score !== null && procs.score <= 5) {
     const nodeCount = Number(procs.metrics['node'] ?? 0);
     const agentCount = Number(procs.metrics['claude'] ?? 0) +
                        Number(procs.metrics['cursor'] ?? 0) +
@@ -129,7 +135,7 @@ export function diagnose(audit: AuditResult): Diagnosis[] {
 
   // Pattern: GPU thermal throttling
   const cpu = gateMap.get('cpu');
-  if (cpu && cpu.score < 8) {
+  if (cpu && cpu.score !== null && cpu.score < 8) {
     const gpuTemp = Number(cpu.metrics['gpuTemp'] ?? 0);
     if (gpuTemp > 80) {
       diagnoses.push({
@@ -151,7 +157,7 @@ export function diagnose(audit: AuditResult): Diagnosis[] {
 
   // Pattern: Knowledge gap
   const knowledge = gateMap.get('knowledge');
-  if (knowledge && knowledge.score < 8) {
+  if (knowledge && knowledge.score !== null && knowledge.score < 8) {
     diagnoses.push({
       rootCause: 'Missing project intelligence',
       affectedGates: ['knowledge'],

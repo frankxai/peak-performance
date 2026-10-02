@@ -34,6 +34,10 @@ jobs:
           run_install: false
       - name: Frozen dependency install
         run: pnpm install --frozen-lockfile
+      - name: Python fixture runtime
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12.10'
       - name: Source tests
         run: pnpm test
       - name: Typecheck
@@ -41,7 +45,13 @@ jobs:
       - name: Build
         run: pnpm build
       - name: Emitted tests
-        run: node --test dist/core/preflight.test.js dist/core/storage.test.js dist/core/probes.test.js dist/gates/scoring.test.js
+        run: node --test dist/core/preflight.test.js dist/core/storage.test.js dist/core/probes.test.js dist/core/audit.test.js dist/core/doctor.test.js dist/gates/scoring.test.js dist/history/tracker.test.js dist/format/terminal.test.js
+      - name: Tray collector and consumer fixtures
+        run: python -B -m unittest discover -s tray -p test_pp_health.py
+      - name: TypeScript and Python source scoring parity
+        run: node --experimental-vm-modules scripts/test-scoring-parity.cjs
+      - name: Emitted scoring parity
+        run: node scripts/test-scoring-parity.cjs --compiled
       - name: Dependency-free admission fixture
         run: node --experimental-vm-modules scripts/test-preflight-native.cjs
       - name: Compiled CLI and MCP contracts
@@ -52,6 +62,8 @@ jobs:
           node-version: '18.20.8'
           package-manager-cache: false
       - name: Node 18 emitted tests
-        run: node --test dist/core/preflight.test.js dist/core/storage.test.js dist/core/probes.test.js dist/gates/scoring.test.js
+        run: node --test dist/core/preflight.test.js dist/core/storage.test.js dist/core/probes.test.js dist/core/audit.test.js dist/core/doctor.test.js dist/gates/scoring.test.js dist/history/tracker.test.js dist/format/terminal.test.js
+      - name: Node 18 emitted scoring parity
+        run: node scripts/test-scoring-parity.cjs --compiled
       - name: Node 18 compiled CLI and MCP contracts
         run: node --test scripts/test-preflight-compiled.cjs

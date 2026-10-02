@@ -414,6 +414,51 @@ console.log(formatMarkdown(result));
 
 ## History & Trends
 
+CPU, process, crash and capacity evidence can be unknown. An incomplete scored
+snapshot now returns `totalScore: null`, `rawScore: null`, grade `UNKNOWN`, and
+`score: null` on affected gates. Displays show `Unknown`; JSON and history keep
+the nulls. Callers must check for null before arithmetic. Trend deltas require
+two numerical readings, and best/worst comparisons exclude unknown readings.
+Maintenance labels failed capacity explicitly and avoids recommending cleanup
+from an invalid disk reading. Reserved preflight work requires fresh measured
+memory, disk, CPU, process and crash evidence, including the capacity fields in
+`probeEvidence`; older incomplete plans hold until refreshed.
+
+The tray uses raw CPU counter deltas and the same CPU, process and agent scoring
+thresholds as TypeScript. On Windows, system time already includes interrupt
+time, so both probes count it once. See the
+[libuv Windows collector](https://github.com/libuv/libuv/blob/v1.51.0/src/win/util.c)
+and [psutil CPU counters](https://psutil.io/api/#psutil.cpu_times).
+Common synthetic evidence verifies scorer parity and unknown propagation;
+physical sampling calibration and an installed tray session remain unverified.
+POSIX samples use Node's user/nice/system/idle/IRQ counter coverage; Linux
+iowait, softirq and steal coverage remains outside this comparison.
+
+Tray process metrics include task runtimes, MCP leaves and duplicate signatures,
+and observed agent-tree memory. Command lines stay transient inside the Python
+probe and are redacted before duplicate signatures are counted. Denied runtime
+commands, incomplete rows and failed enumeration remain
+unknown. Windows crash collection uses structured Application Error events with
+an eight-second deadline and a hidden child window; POSIX crash evidence remains
+unsupported. Unsupported POSIX crashes make the total unknown and hold reserved
+work, even when process counts are measured. Unknown tray cycles show `?` and
+emit no numerical score alert; a subsequent measured low score alerts once.
+
+The draft source checks exercise both scorers, isolated collectors, nullable
+history and display consumers on Ubuntu and Windows. Full main readiness remains
+blocked on installed/client adoption, remaining classifier coverage, safe cleanup
+and caller lifecycle, history durability, and probe cost. The shared launcher and
+installed distribution remain unchanged.
+CI pins Python 3.12.10 through the official
+[setup-python action](https://github.com/actions/setup-python) for the isolated
+fixtures. Real psutil, pystray and Pillow installation remains a separate check.
+The isolated Windows checks also execute the Python crash collector against
+the host event log. Common collector comparisons cover three supplied process
+fixtures; denied working-set visibility is treated more strictly in Python.
+Preflight `current` and overnight process summaries retain raw observations.
+Admission decisions, hard blocks and maintenance `probeEvidence` qualify their
+validity; consumers must check these before using raw metrics.
+
 Every audit (from CLI or tray) writes to `.pp/history.json`. View trends:
 
 ```bash
