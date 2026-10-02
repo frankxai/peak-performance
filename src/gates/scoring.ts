@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { GateScore, GateId, Recommendation } from '../types.js';
 import type {
   MemoryInfo, CpuInfo, DiskInfo, GpuInfo,
-  ProcessInfo, GitInfo, SecretsInfo, TempInfo,
+  ProcessInfo, GitInfo, SecretsInfo, TempInfo, CrashLoopInfo,
 } from '../core/probes.js';
 
 function status(score: number): GateScore['status'] {
@@ -17,8 +17,21 @@ function status(score: number): GateScore['status'] {
   return 'CRIT';
 }
 
+function unknown(id: GateId, detail: string): GateScore {
+  return { id, score: null, status: 'UNKNOWN', detail, metrics: { evidence: 'unknown' } };
+}
+
+function validMemory(mem: MemoryInfo): boolean {
+  return Number.isFinite(mem.totalMB) && mem.totalMB > 0 && Number.isFinite(mem.freeMB) && mem.freeMB >= 0 && mem.freeMB <= mem.totalMB && Number.isFinite(mem.usedPct) && mem.usedPct >= 0 && mem.usedPct <= 100;
+}
+
+function validDisk(disk: DiskInfo): boolean {
+  return Number.isFinite(disk.totalGB) && disk.totalGB > 0 && Number.isFinite(disk.freeGB) && disk.freeGB >= 0 && disk.freeGB <= disk.totalGB && Number.isFinite(disk.usedPct) && disk.usedPct >= 0 && disk.usedPct <= 100;
+}
+
 // ─── Foundation (Disk) ──────────────────────────────────────────
 export function scoreDisk(disk: DiskInfo): GateScore {
+  if (!validDisk(disk)) return unknown('disk', 'Disk capacity is unknown; invalid or failed filesystem evidence.');
   const recs: Recommendation[] = [];
   let score = 10;
 
@@ -38,6 +51,7 @@ export function scoreDisk(disk: DiskInfo): GateScore {
 
 // ─── Flow (Memory) ──────────────────────────────────────────────
 export function scoreMemory(mem: MemoryInfo): GateScore {
+  if (!validMemory(mem)) return unknown('memory', 'Memory capacity is unknown; invalid memory evidence.');
   let score = 10;
 
   if (mem.usedPct > 95) score = 1;
@@ -57,8 +71,9 @@ export function scoreMemory(mem: MemoryInfo): GateScore {
 
 // ─── Fire (CPU + GPU) ───────────────────────────────────────────
 export function scoreCpuGpu(cpu: CpuInfo, gpu: GpuInfo | null): GateScore {
+  if (cpu.status !== 'measured' || ![cpu.loadPct, cpu.systemLoadPct].every(value => Number.isFinite(value) && value >= 0 && value <= 100) || cpu.systemLoadPct > cpu.loadPct) return unknown('cpu', 'CPU utilization is unknown; a measured valid sample is required.');
   let score = 10;
-  let detail = `${cpu.model} (${cpu.logicalCores} threads)`;
+  let detail = `${cpu.model} (${cpu.logicalCores} threads) | CPU ${cpu.loadPct}% (${cpu.systemLoadPct}% system)`;
 
   if (gpu) {
     detail += ` | ${gpu.name} ${gpu.tempC}°C`;
@@ -69,10 +84,14 @@ export function scoreCpuGpu(cpu: CpuInfo, gpu: GpuInfo | null): GateScore {
     if (gpu.utilPct > 90) score -= 2;
   }
 
-  // CPU load (percentage-based, works on all platforms)
-  if (cpu.loadPct > 95) score -= 3;
-  else if (cpu.loadPct > 80) score -= 2;
-  else if (cpu.loadPct > 60) score -= 1;
+  // Sustained saturation and kernel-heavy pressure make an interactive machine unready.
+  if (cpu.loadPct >= 95) score = Math.min(score, 2);
+  else if (cpu.loadPct >= 85) score = Math.min(score, 4);
+  else if (cpu.loadPct >= 70) score = Math.min(score, 6);
+  else if (cpu.loadPct >= 55) score = Math.min(score, 8);
+
+  if (cpu.systemLoadPct >= 45) score = Math.min(score, 4);
+  else if (cpu.systemLoadPct >= 30) score = Math.min(score, 6);
 
   score = Math.max(0, Math.min(10, score));
 
@@ -84,30 +103,45 @@ export function scoreCpuGpu(cpu: CpuInfo, gpu: GpuInfo | null): GateScore {
     metrics: {
       cores: cpu.logicalCores,
       loadPct: cpu.loadPct,
+      systemLoadPct: cpu.systemLoadPct,
+      sampleMs: cpu.sampleMs,
       ...(gpu ? { gpuTemp: gpu.tempC, gpuUtil: gpu.utilPct, gpuMem: `${gpu.memUsedMB}/${gpu.memTotalMB}MB` } : {}),
     },
   };
 }
 
 // ─── Heart (Process Health) ─────────────────────────────────────
-export function scoreProcesses(procs: ProcessInfo): GateScore {
+export function scoreProcesses(procs: ProcessInfo, crashes: CrashLoopInfo = { windowMinutes: 15, totalCrashes: 0, topApp: '', topAppCrashes: 0, apps: [] }): GateScore {
+  if (procs.status !== 'measured' || crashes.status !== 'measured'
+    || ![procs.claudeCount, procs.cursorCount, procs.codexCount, procs.nodeCount, procs.codexTaskRuntimeCount, procs.duplicateMcpProcesses, procs.totalProcesses, crashes.totalCrashes, crashes.topAppCrashes].every(value => Number.isInteger(value) && value >= 0)
+    || crashes.topAppCrashes > crashes.totalCrashes) return unknown('processes', 'Process or crash evidence is unknown; incomplete collection cannot establish health.');
   let score = 10;
-  const agents = procs.claudeCount + procs.cursorCount + procs.codexCount;
-  const nodePerAgent = agents > 0 ? Math.round(procs.nodeCount / agents) : procs.nodeCount;
+  const namedAgents = procs.claudeCount + procs.cursorCount + procs.codexCount;
+  const logicalRuntimes = Math.max(namedAgents, procs.codexTaskRuntimeCount);
+  const nodePerRuntime = logicalRuntimes > 0 ? Math.round(procs.nodeCount / logicalRuntimes) : procs.nodeCount;
 
-  // Agent instance count
-  if (procs.claudeCount > 10) score -= 3;
-  else if (procs.claudeCount > 6) score -= 2;
-  else if (procs.claudeCount > 4) score -= 1;
+  if (logicalRuntimes > 12) score -= 4;
+  else if (logicalRuntimes > 8) score -= 3;
+  else if (logicalRuntimes > 4) score -= 2;
+  else if (logicalRuntimes > 2) score -= 1;
 
-  // Node:Agent ratio (healthy is 3-5:1)
-  if (nodePerAgent > 15) score -= 3;
-  else if (nodePerAgent > 10) score -= 2;
-  else if (nodePerAgent > 7) score -= 1;
+  if (procs.duplicateMcpProcesses > 60) score -= 4;
+  else if (procs.duplicateMcpProcesses > 30) score -= 3;
+  else if (procs.duplicateMcpProcesses > 10) score -= 2;
+  else if (procs.duplicateMcpProcesses > 0) score -= 1;
+
+  // Node:runtime ratio catches unexplained Node growth after logical task counting.
+  if (nodePerRuntime > 15) score -= 3;
+  else if (nodePerRuntime > 10) score -= 2;
+  else if (nodePerRuntime > 7) score -= 1;
 
   // Total process count
-  if (procs.totalProcesses > 600) score -= 2;
+  if (procs.totalProcesses > 550) score -= 2;
   else if (procs.totalProcesses > 400) score -= 1;
+
+  if (crashes.topAppCrashes >= 30) score = Math.min(score, 1);
+  else if (crashes.topAppCrashes >= 10) score = Math.min(score, 3);
+  else if (crashes.topAppCrashes >= 3) score -= 2;
 
   score = Math.max(0, Math.min(10, score));
 
@@ -115,15 +149,24 @@ export function scoreProcesses(procs: ProcessInfo): GateScore {
     id: 'processes',
     score,
     status: status(score),
-    detail: `${agents} AI agents, ${procs.nodeCount} node, ${procs.totalProcesses} total (${nodePerAgent}:1 node/agent)`,
+    detail: `${namedAgents} named agents, ${logicalRuntimes} task runtimes, ${procs.nodeCount} node, ${procs.mcpCount} MCP servers (${procs.mcpProcessCount} tree processes) / ${procs.mcpMemoryMB}MB, ${procs.totalProcesses} total${crashes.topAppCrashes > 0 ? ` | ${crashes.topApp} ${crashes.topAppCrashes} crashes/${crashes.windowMinutes}m` : ''}`,
     metrics: {
       claude: procs.claudeCount,
       cursor: procs.cursorCount,
       codex: procs.codexCount,
       vscode: procs.vscodeCount,
       node: procs.nodeCount,
+      taskRuntimes: logicalRuntimes,
+      mcp: procs.mcpCount,
+      mcpProcesses: procs.mcpProcessCount,
+      mcpMemoryMB: procs.mcpMemoryMB,
+      duplicateMcp: procs.duplicateMcpProcesses,
+      nodePerRuntime,
       total: procs.totalProcesses,
       protected: procs.protectedCount,
+      recentCrashes: crashes.totalCrashes,
+      crashLoopApp: crashes.topApp,
+      crashLoopCount: crashes.topAppCrashes,
     },
   };
 }
@@ -240,16 +283,20 @@ export function scoreKnowledge(cwd: string): GateScore {
 
 // ─── Unity (Agent Load) ─────────────────────────────────────────
 export function scoreAgentLoad(mem: MemoryInfo, procs: ProcessInfo): GateScore {
+  if (!validMemory(mem) || procs.status !== 'measured' || !Number.isFinite(procs.agentTreeMemoryMB) || procs.agentTreeMemoryMB < 0 || ![procs.claudeCount, procs.cursorCount, procs.codexCount, procs.codexTaskRuntimeCount].every(value => Number.isInteger(value) && value >= 0)) return unknown('agents', 'Agent footprint is unknown; complete process and memory evidence is required.');
   let score = 10;
   const agents = procs.claudeCount + procs.cursorCount + procs.codexCount;
 
-  // Agent memory pressure: estimate agent RAM consumption
-  const estAgentMB = procs.claudeCount * 450 + procs.cursorCount * 300 + procs.codexCount * 200;
+  // Prefer the observed AI-agent process tree; use the old estimate only on fallback probes.
+  const estAgentMB = procs.agentTreeMemoryMB > 0
+    ? procs.agentTreeMemoryMB
+    : procs.claudeCount * 450 + procs.cursorCount * 300 + procs.codexCount * 200;
   const agentPct = Math.round(estAgentMB / mem.totalMB * 100);
 
-  if (agentPct > 40) score -= 4;
-  else if (agentPct > 30) score -= 3;
-  else if (agentPct > 20) score -= 1;
+  if (agentPct > 50) score = 2;
+  else if (agentPct > 35) score = 4;
+  else if (agentPct > 25) score = 6;
+  else if (agentPct > 15) score = 8;
 
   // Combined system pressure
   if (mem.usedPct > 90 && agents > 3) score -= 2;
@@ -260,13 +307,14 @@ export function scoreAgentLoad(mem: MemoryInfo, procs: ProcessInfo): GateScore {
     id: 'agents',
     score,
     status: status(score),
-    detail: `${agents} agents using ~${estAgentMB}MB (${agentPct}% of ${mem.totalMB}MB)`,
-    metrics: { agents, estAgentMB, agentPct },
+    detail: `${agents} named agents / ${procs.codexTaskRuntimeCount} Codex task runtimes using ~${estAgentMB}MB (${agentPct}% of ${mem.totalMB}MB)`,
+    metrics: { agents, taskRuntimes: procs.codexTaskRuntimeCount, estAgentMB, agentPct },
   };
 }
 
 // ─── Source (System Overall) ────────────────────────────────────
 export function scoreSystem(disk: DiskInfo, mem: MemoryInfo, uptimeHours: number): GateScore {
+  if (!validDisk(disk) || !validMemory(mem) || !Number.isFinite(uptimeHours) || uptimeHours < 0) return unknown('system', 'System health is unknown; invalid capacity or uptime evidence.');
   let score = 10;
 
   // Composite health
@@ -289,7 +337,8 @@ export function scoreSystem(disk: DiskInfo, mem: MemoryInfo, uptimeHours: number
 }
 
 // ─── GRADE ──────────────────────────────────────────────────────
-export function grade(score: number): string {
+export function grade(score: number | null): string {
+  if (score === null || !Number.isFinite(score) || score < 0 || score > 100) return 'UNKNOWN';
   if (score >= 95) return 'S';
   if (score >= 90) return 'A+';
   if (score >= 85) return 'A';

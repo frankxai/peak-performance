@@ -1,0 +1,69 @@
+name: Source checks
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'agent/codex/pp-reserve-floor-20261001']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  project:
+    name: Project (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.16.0'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: '11.5.0'
+          run_install: false
+      - name: Frozen dependency install
+        run: pnpm install --frozen-lockfile
+      - name: Python fixture runtime
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12.10'
+      - name: Source tests
+        run: pnpm test
+      - name: Typecheck
+        run: pnpm lint
+      - name: Build
+        run: pnpm build
+      - name: Emitted tests
+        run: node --test dist/core/preflight.test.js dist/core/storage.test.js dist/core/probes.test.js dist/core/audit.test.js dist/core/doctor.test.js dist/gates/scoring.test.js dist/history/tracker.test.js dist/format/terminal.test.js
+      - name: Tray collector and consumer fixtures
+        run: python -B -m unittest discover -s tray -p test_pp_health.py
+      - name: TypeScript and Python source scoring parity
+        run: node --experimental-vm-modules scripts/test-scoring-parity.cjs
+      - name: Emitted scoring parity
+        run: node scripts/test-scoring-parity.cjs --compiled
+      - name: Dependency-free admission fixture
+        run: node --experimental-vm-modules scripts/test-preflight-native.cjs
+      - name: Compiled CLI and MCP contracts
+        run: node --test scripts/test-preflight-compiled.cjs
+      - name: Node 18 compatibility runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '18.20.8'
+          package-manager-cache: false
+      - name: Node 18 emitted tests
+        run: node --test dist/core/preflight.test.js dist/core/storage.test.js dist/core/probes.test.js dist/core/audit.test.js dist/core/doctor.test.js dist/gates/scoring.test.js dist/history/tracker.test.js dist/format/terminal.test.js
+      - name: Node 18 emitted scoring parity
+        run: node scripts/test-scoring-parity.cjs --compiled
+      - name: Node 18 compiled CLI and MCP contracts
+        run: node --test scripts/test-preflight-compiled.cjs

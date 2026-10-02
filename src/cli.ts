@@ -12,6 +12,7 @@
  *   pp inspect         Process census and top memory consumers
  *   pp watch           Bounded process start/stop ledger
  *   pp maintain        Predictive maintenance and swarm posture
+ *   pp preflight       Workload-aware admission decision
  *   pp overnight       Overnight swarm guard plan
  *   pp snapshot        Screenshot + audit bundle (archived)
  */
@@ -24,8 +25,9 @@ import { runPrepHandover } from './core/handover.js';
 import { probeProcesses } from './core/probes.js';
 import { runProcessWatch } from './core/process-ledger.js';
 import { buildMaintenancePlan } from './core/maintenance.js';
+import { buildPreflightPlan, isWorkloadType, readPreflightReserveMB, WORKLOADS } from './core/preflight.js';
 import { buildOvernightGuardPlan, formatOvernightGuardMarkdown, writeOvernightGuardPlan } from './core/overnight.js';
-import { formatAudit, formatTrend, formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan } from './format/terminal.js';
+import { formatAudit, formatTrend, formatJson, formatMarkdown, formatProcessInspection, formatMaintenanceCompact, formatMaintenancePlan, formatOvernightGuardPlan, formatPreflightPlan } from './format/terminal.js';
 import { resolve } from 'node:path';
 
 // Respect NO_COLOR standard (https://no-color.org/)
@@ -68,6 +70,11 @@ function readStringFlag(name: string): string | undefined {
 
 void (async () => {
 switch (command) {
+  case '--mcp':
+  case 'mcp':
+    await import('./integrations/mcp-server/index.js');
+    break;
+
   case 'audit': {
     const audit = runAudit({ cwd: process.cwd() });
     const tracker = new TrendTracker(historyPath);
@@ -119,9 +126,9 @@ switch (command) {
     // Re-audit after fixes
     console.log('\n  Re-auditing...\n');
     const after = runAudit({ cwd: process.cwd() });
-    const delta = after.totalScore - audit.totalScore;
-    const color = delta > 0 ? '\x1b[32m' : '\x1b[90m';
-    console.log(`  Before: ${audit.totalScore}/${audit.grade} → After: ${color}${after.totalScore}/${after.grade}\x1b[0m (+${delta} points)\n`);
+    const delta = after.totalScore === null || audit.totalScore === null ? null : after.totalScore - audit.totalScore;
+    const color = delta !== null && delta > 0 ? '\x1b[32m' : '\x1b[90m';
+    console.log(`  Before: ${audit.totalScore ?? 'Unknown'}/${audit.grade} → After: ${color}${after.totalScore ?? 'Unknown'}/${after.grade}\x1b[0m (${delta === null ? 'change unknown; incomplete evidence' : `${delta >= 0 ? '+' : ''}${delta} points`})\n`);
     break;
   }
 
@@ -192,6 +199,21 @@ switch (command) {
     break;
   }
 
+  case 'preflight': {
+    const workloadValue = readStringFlag('workload') ?? args[1] ?? 'interactive';
+    if (!isWorkloadType(workloadValue)) {
+      throw new Error(`Unknown workload "${workloadValue}". Use one of: ${WORKLOADS.join(', ')}.`);
+    }
+    const plan = buildPreflightPlan(workloadValue, {
+      cwd: process.cwd(),
+      reserveMB: readPreflightReserveMB(args),
+    });
+    if (flags.has('--json')) console.log(JSON.stringify(plan, null, 2));
+    else console.log(formatPreflightPlan(plan));
+    if (plan.decision === 'hold') process.exitCode = 2;
+    break;
+  }
+
   case 'overnight':
   case 'guard': {
     const plan = buildOvernightGuardPlan(process.cwd());
@@ -240,6 +262,7 @@ switch (command) {
   Peak Performance — System health for AI-powered machines
 
   Commands:
+    pp --mcp                        MCP server over stdio
     pp audit [--json|--md|--plain]   Full system audit
     pp doctor                        Diagnose root causes + action plan
     pp trend [N]                     Show last N score entries
@@ -248,13 +271,16 @@ switch (command) {
     pp inspect [--all|--json]        Process census + top memory consumers
     pp watch [--seconds N]           Bounded process start/stop ledger
     pp maintain [--json]             Predict maintenance + swarm posture
+    pp preflight --workload TYPE     Admit or hold a workload within live resource budgets
     pp overnight [--write|--json]     Overnight swarm guard plan
     pp snapshot [notes]              Screenshot + audit archive bundle
     pp prep                          Preserve agent state and prepare reboot
 
   Environment:
     NO_COLOR=1                       Disable ANSI color codes
-    PP_CWD=/path                     Override working directory
+
+  Preflight workloads:
+    ${WORKLOADS.join(', ')}
 `);
 }
 })().catch((err: unknown) => {

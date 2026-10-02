@@ -4,6 +4,31 @@ Python port of gates/scoring.ts.
 Maps raw probe metrics to 0-10 scores per gate, total 0-100.
 """
 
+import math
+
+
+def _finite(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _integer(value):
+    return _finite(value) and value >= 0 and int(value) == value
+
+
+def _round(value):
+    # Match JavaScript Math.round for the nonnegative quantities used here.
+    return math.floor(value + 0.5)
+
+
+def _unknown(gid, detail):
+    return {'id': gid, 'score': None, 'status': 'UNKNOWN', 'detail': detail}
+
+
+def _valid_capacity(info, total, free):
+    return (_finite(info.get(total)) and info[total] > 0
+            and _finite(info.get(free)) and 0 <= info[free] <= info[total]
+            and _finite(info.get('usedPct')) and 0 <= info['usedPct'] <= 100)
+
 
 def _status(score: int) -> str:
     if score >= 9:
@@ -22,6 +47,8 @@ def _clamp(score: int) -> int:
 # ─── Foundation (Disk) ──────────────────────────────────────────
 
 def score_disk(disk: dict) -> dict:
+    if not _valid_capacity(disk, 'totalGB', 'freeGB'):
+        return _unknown('disk', 'Invalid disk capacity evidence')
     free = disk['freeGB']
     if free < 10:
         score = 2
@@ -45,6 +72,8 @@ def score_disk(disk: dict) -> dict:
 # ─── Flow (Memory) ─────────────────────────────────────────────
 
 def score_memory(mem: dict) -> dict:
+    if not _valid_capacity(mem, 'totalMB', 'freeMB'):
+        return _unknown('memory', 'Invalid memory evidence')
     pct = mem['usedPct']
     if pct > 95:
         score = 1
@@ -70,73 +99,63 @@ def score_memory(mem: dict) -> dict:
 # ─── Fire (CPU + GPU) ──────────────────────────────────────────
 
 def score_cpu_gpu(cpu: dict, gpu: dict | None) -> dict:
+    if (cpu.get('status') != 'measured'
+            or not all(_finite(cpu.get(k)) and 0 <= cpu[k] <= 100 for k in ['loadPct', 'systemLoadPct'])
+            or cpu['systemLoadPct'] > cpu['loadPct']):
+        return _unknown('cpu', 'A measured valid CPU sample is required')
     score = 10
-    detail = f"{cpu['model']}"
-
     if gpu:
-        detail += f" | {gpu['name']} {gpu['tempC']}C"
-        if gpu['tempC'] > 90:
-            score -= 4
-        elif gpu['tempC'] > 80:
-            score -= 2
-        elif gpu['tempC'] > 70:
-            score -= 1
-
-        if gpu['utilPct'] > 90:
-            score -= 2
-
-    logical = cpu['logicalCores'] or 1
-    load_per_core = cpu['loadAvg1m'] / logical
-    if load_per_core > 2:
-        score -= 3
-    elif load_per_core > 1:
-        score -= 2
-    elif load_per_core > 0.7:
-        score -= 1
-
+        if gpu['tempC'] > 90: score -= 4
+        elif gpu['tempC'] > 80: score -= 2
+        elif gpu['tempC'] > 70: score -= 1
+        if gpu['utilPct'] > 90: score -= 2
+    load, system = cpu['loadPct'], cpu['systemLoadPct']
+    if load >= 95: score = min(score, 2)
+    elif load >= 85: score = min(score, 4)
+    elif load >= 70: score = min(score, 6)
+    elif load >= 55: score = min(score, 8)
+    if system >= 45: score = min(score, 4)
+    elif system >= 30: score = min(score, 6)
     score = _clamp(score)
-    return {
-        'id': 'cpu',
-        'score': score,
-        'status': _status(score),
-        'detail': detail,
-    }
-
+    return {'id': 'cpu', 'score': score, 'status': _status(score),
+            'detail': f"CPU {load}% ({system}% system)"}
 
 # ─── Heart (Process Health) ────────────────────────────────────
 
-def score_processes(procs: dict) -> dict:
+def score_processes(procs: dict, crashes: dict | None = None) -> dict:
+    crashes = crashes or {}
+    keys = ['claudeCount', 'cursorCount', 'codexCount', 'nodeCount',
+            'codexTaskRuntimeCount', 'duplicateMcpProcesses', 'totalProcesses']
+    if (procs.get('status') != 'measured' or crashes.get('status') != 'measured'
+            or not all(_integer(procs.get(k)) for k in keys)
+            or not all(_integer(crashes.get(k)) for k in ['totalCrashes', 'topAppCrashes'])
+            or crashes['topAppCrashes'] > crashes['totalCrashes']):
+        return _unknown('processes', 'Incomplete process or crash evidence')
     score = 10
-    agents = procs['claudeCount'] + procs['cursorCount'] + procs['codexCount']
-    node_per_agent = round(procs['nodeCount'] / agents) if agents > 0 else procs['nodeCount']
-
-    if procs['claudeCount'] > 10:
-        score -= 3
-    elif procs['claudeCount'] > 6:
-        score -= 2
-    elif procs['claudeCount'] > 4:
-        score -= 1
-
-    if node_per_agent > 15:
-        score -= 3
-    elif node_per_agent > 10:
-        score -= 2
-    elif node_per_agent > 7:
-        score -= 1
-
-    if procs['totalProcesses'] > 600:
-        score -= 2
-    elif procs['totalProcesses'] > 400:
-        score -= 1
-
+    named = procs['claudeCount'] + procs['cursorCount'] + procs['codexCount']
+    runtimes = max(named, procs['codexTaskRuntimeCount'])
+    ratio = _round(procs['nodeCount'] / runtimes) if runtimes else procs['nodeCount']
+    if runtimes > 12: score -= 4
+    elif runtimes > 8: score -= 3
+    elif runtimes > 4: score -= 2
+    elif runtimes > 2: score -= 1
+    duplicates = procs['duplicateMcpProcesses']
+    if duplicates > 60: score -= 4
+    elif duplicates > 30: score -= 3
+    elif duplicates > 10: score -= 2
+    elif duplicates > 0: score -= 1
+    if ratio > 15: score -= 3
+    elif ratio > 10: score -= 2
+    elif ratio > 7: score -= 1
+    if procs['totalProcesses'] > 550: score -= 2
+    elif procs['totalProcesses'] > 400: score -= 1
+    crashes_count = crashes['topAppCrashes']
+    if crashes_count >= 30: score = min(score, 1)
+    elif crashes_count >= 10: score = min(score, 3)
+    elif crashes_count >= 3: score -= 2
     score = _clamp(score)
-    return {
-        'id': 'processes',
-        'score': score,
-        'status': _status(score),
-        'detail': f"{agents} AI agents, {procs['nodeCount']} node, {procs['totalProcesses']} total ({node_per_agent}:1 node/agent)",
-    }
-
+    return {'id': 'processes', 'score': score, 'status': _status(score),
+            'detail': f"{named} named agents, {runtimes} runtimes, {duplicates} duplicate MCP, {crashes_count} recent crashes"}
 
 # ─── Voice (Git Hygiene) ───────────────────────────────────────
 
@@ -235,34 +254,30 @@ def score_knowledge(knowledge: dict) -> dict:
 # ─── Unity (Agent Load) ───────────────────────────────────────
 
 def score_agent_load(mem: dict, procs: dict) -> dict:
-    score = 10
+    if (not _valid_capacity(mem, 'totalMB', 'freeMB') or procs.get('status') != 'measured'
+            or not _finite(procs.get('agentTreeMemoryMB')) or procs['agentTreeMemoryMB'] < 0
+            or not all(_integer(procs.get(k)) for k in ['claudeCount', 'cursorCount', 'codexCount', 'codexTaskRuntimeCount'])):
+        return _unknown('agents', 'Incomplete process or memory evidence')
     agents = procs['claudeCount'] + procs['cursorCount'] + procs['codexCount']
-
-    est_agent_mb = procs['claudeCount'] * 450 + procs['cursorCount'] * 300 + procs['codexCount'] * 200
-    agent_pct = round(est_agent_mb / mem['totalMB'] * 100) if mem['totalMB'] > 0 else 0
-
-    if agent_pct > 40:
-        score -= 4
-    elif agent_pct > 30:
-        score -= 3
-    elif agent_pct > 20:
-        score -= 1
-
-    if mem['usedPct'] > 90 and agents > 3:
-        score -= 2
-
+    estimate = (procs['agentTreeMemoryMB'] if procs['agentTreeMemoryMB'] > 0
+                else procs['claudeCount'] * 450 + procs['cursorCount'] * 300 + procs['codexCount'] * 200)
+    pct = _round(estimate / mem['totalMB'] * 100)
+    score = 10
+    if pct > 50: score = 2
+    elif pct > 35: score = 4
+    elif pct > 25: score = 6
+    elif pct > 15: score = 8
+    if mem['usedPct'] > 90 and agents > 3: score -= 2
     score = _clamp(score)
-    return {
-        'id': 'agents',
-        'score': score,
-        'status': _status(score),
-        'detail': f"{agents} agents using ~{est_agent_mb}MB ({agent_pct}% of {mem['totalMB']}MB)",
-    }
-
+    return {'id': 'agents', 'score': score, 'status': _status(score),
+            'detail': f"{agents} named agents using ~{estimate}MB ({pct}%)"}
 
 # ─── Source (System Overall) ──────────────────────────────────
 
 def score_system(disk: dict, mem: dict, uptime_hours: float) -> dict:
+    if (not _valid_capacity(disk, 'totalGB', 'freeGB') or not _valid_capacity(mem, 'totalMB', 'freeMB')
+            or not _finite(uptime_hours) or uptime_hours < 0):
+        return _unknown('system', 'Invalid capacity or uptime evidence')
     score = 10
 
     if disk['freeGB'] < 20 and mem['usedPct'] > 85:
@@ -287,7 +302,9 @@ def score_system(disk: dict, mem: dict, uptime_hours: float) -> dict:
 
 # ─── GRADE ─────────────────────────────────────────────────────
 
-def grade(score: int) -> str:
+def grade(score: int | None) -> str:
+    if not _finite(score) or not 0 <= score <= 100:
+        return 'UNKNOWN'
     if score >= 95:
         return 'S'
     if score >= 90:
@@ -323,7 +340,7 @@ def run_audit(probes: dict) -> dict:
         score_disk(probes['disk']),
         score_memory(probes['memory']),
         score_cpu_gpu(probes['cpu'], probes['gpu']),
-        score_processes(probes['processes']),
+        score_processes(probes['processes'], probes.get('crashes')),
         score_git(probes['git']),
         score_secrets(probes['secrets']),
         score_workspace(probes['temp']),
@@ -332,11 +349,24 @@ def run_audit(probes: dict) -> dict:
         score_system(probes['disk'], probes['memory'], probes['uptime']['uptimeHours']),
     ]
 
-    total = sum(g['score'] for g in gates)
+    unknown = [g['id'] for g in gates if g['score'] is None or g['status'] == 'UNKNOWN']
+    raw = None if unknown else sum(g['score'] for g in gates)
+    total = raw
+    caps = []
+    if unknown:
+        caps.append('Incomplete probe evidence: ' + ', '.join(unknown))
+    elif probes['crashes']['topAppCrashes'] >= 10:
+        total = min(total, 49)
+        caps.append('Application crash loop')
+    elif any(g['status'] == 'CRIT' for g in gates):
+        total = min(total, 69)
+        caps.append('At least one Ten Gate is critical')
     g = grade(total)
 
     return {
         'totalScore': total,
+        'rawScore': raw,
+        'scoreCaps': caps,
         'grade': g,
         'gates': gates,
         'gateScores': {g['id']: g['score'] for g in gates},

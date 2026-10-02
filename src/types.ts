@@ -16,8 +16,8 @@ export type GateId = keyof typeof GATE_NAMES;
 
 export interface GateScore {
   id: GateId;
-  score: number; // 0-10
-  status: 'OK' | 'WARN' | 'CRIT' | 'PERFECT';
+  score: number | null; // 0-10, null when required evidence is unknown
+  status: 'OK' | 'WARN' | 'CRIT' | 'PERFECT' | 'UNKNOWN';
   detail: string;
   metrics: Record<string, string | number>;
 }
@@ -26,7 +26,9 @@ export interface AuditResult {
   timestamp: string;
   hostname: string;
   platform: NodeJS.Platform;
-  totalScore: number; // 0-100
+  totalScore: number | null; // 0-100, null for an incomplete audit
+  rawScore: number | null; // sum before caps, null for incomplete evidence
+  scoreCaps: string[];
   grade: string;
   gates: GateScore[];
   recommendations: Recommendation[];
@@ -42,9 +44,9 @@ export interface Recommendation {
 
 export interface TrendEntry {
   timestamp: string;
-  score: number;
+  score: number | null;
   grade: string;
-  gates: Record<GateId, number>;
+  gates: Record<GateId, number | null>;
   trigger?: string;
 }
 

@@ -2,14 +2,15 @@
     "name":  "peak-performance",
     "classification":  "tooling",
     "owner":  "FrankX AI",
-    "updated":  "2026-06-19",
+    "updated":  "2026-10-02",
     "remote":  "https://github.com/frankxai/peak-performance.git",
     "health":  {
-                   "primaryCheck":  "npm run build",
+                   "primaryCheck":  "pnpm test",
                    "manualChecks":  [
                                         "Review AGENTS.md before edits",
                                         "Preserve user work and dirty files",
-                                        "Scan public outputs for secrets and private memory"
+                                        "Scan public outputs for secrets and private memory",
+                                        "Run pnpm run lint and pnpm run build under resource admission; verify emitted contracts before source acceptance"
                                     ]
                },
     "agentGuidance":  {

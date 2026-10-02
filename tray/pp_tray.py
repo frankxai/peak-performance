@@ -32,14 +32,14 @@ class PeakPerformanceTray:
         self.history_path = os.path.join(self.cwd, CONFIG['history_path'])
 
         # Current state
-        self.score = 0
-        self.grade_str = '?'
+        self.score = None
+        self.grade_str = 'UNKNOWN'
         self.gates = {}
         self.mem_free_mb = 0
         self.claude_count = 0
         self.disk_free_gb = 0
         self.tooltip = 'PP: initializing...'
-        self.last_alert_score = 100  # track to avoid repeated alerts
+        self.last_alert_score = None  # track to avoid repeated alerts
 
         # Build the tray
         self.icon = pystray.Icon(
@@ -120,8 +120,10 @@ class PeakPerformanceTray:
             return f"{info.get('gate', gid)} ({info.get('guardian', '')})"
         return info.get('plain', gid)
 
-    def _gate_bar(self, score: int) -> str:
+    def _gate_bar(self, score: int | None) -> str:
         """Visual score bar: ████░░░░░░ 6/10"""
+        if score is None:
+            return '?????????? Unknown'
         filled = '█' * score
         empty = '░' * (10 - score)
         return f'{filled}{empty} {score}/10'
@@ -132,14 +134,14 @@ class PeakPerformanceTray:
             items = []
             for gid in ['disk', 'memory', 'cpu', 'processes', 'git',
                         'secrets', 'workspace', 'knowledge', 'agents', 'system']:
-                score = self.gates.get(gid, 0)
+                score = self.gates.get(gid)
                 label = f'{self._gate_label(gid):28s}  {self._gate_bar(score)}'
                 items.append(pystray.MenuItem(label, None, enabled=False))
             return items
 
         return pystray.Menu(
             pystray.MenuItem(
-                lambda _: f'⚡ Score: {self.score}/100  |  Grade: {self.grade_str}',
+                lambda _: f'⚡ Score: {self.score if self.score is not None else "Unknown"}/100  |  Grade: {self.grade_str}',
                 None,
                 enabled=False,
             ),
@@ -228,38 +230,41 @@ class PeakPerformanceTray:
             self.disk_free_gb = probes['disk']['freeGB']
 
             # Update tooltip — rich multi-line summary
-            mem_free_gb = round(self.mem_free_mb / 1024, 1)
+            ram_text = f'{round(self.mem_free_mb / 1024, 1)}GB free' if self.gates.get('memory') is not None else 'Unknown'
+            disk_text = f'{self.disk_free_gb}GB' if self.gates.get('disk') is not None else 'Unknown'
+            claude_text = str(self.claude_count) if self.gates.get('processes') is not None else 'Unknown'
             # Gate summary: show worst gates first
             gate_summary = ''
             if self.gates:
-                worst = sorted(self.gates.items(), key=lambda x: x[1])[:3]
+                worst = sorted(self.gates.items(), key=lambda x: (x[1] is not None, x[1] if x[1] is not None else 0))[:3]
                 labels = GATE_NAMES if self.theme == 'arcanea' else None
                 parts = []
                 for gid, gscore in worst:
-                    if gscore < 8:
+                    if gscore is None or gscore < 8:
                         name = GATE_NAMES.get(gid, {}).get(
                             'guardian' if self.theme == 'arcanea' else 'plain', gid
                         )
-                        parts.append(f'{name}:{gscore}')
+                        parts.append(f'{name}:{gscore if gscore is not None else chr(63)}')
                 if parts:
                     gate_summary = f' | {", ".join(parts)}'
 
             self.tooltip = (
-                f'Peak Performance {self.score}/{self.grade_str}'
+                f'Peak Performance {self.score if self.score is not None else "Unknown"}/{self.grade_str}'
                 f'{gate_summary}\n'
-                f'RAM: {mem_free_gb}GB free | '
-                f'Disk: {self.disk_free_gb}GB | '
-                f'Claude: {self.claude_count}'
+                f'RAM: {ram_text} | '
+                f'Disk: {disk_text} | '
+                f'Claude: {claude_text}'
             )
 
             # Save to history
             self._save_history(audit)
 
             # Alert on low score
-            if self.score < self.alert_threshold and self.last_alert_score >= self.alert_threshold:
+            if (self.score is not None and self.score < self.alert_threshold
+                    and (self.last_alert_score is None or self.last_alert_score >= self.alert_threshold)):
                 try:
                     self.icon.notify(
-                        f'Score dropped to {self.score}/{self.grade_str}. '
+                        f'Current score is {self.score if self.score is not None else "Unknown"}/{self.grade_str}. '
                         f'Run "pp fix" to resolve issues.',
                         'Peak Performance Alert',
                     )
@@ -271,18 +276,21 @@ class PeakPerformanceTray:
             # Update icon
             self._update_icon()
 
-        except Exception as e:
-            # Don't crash the tray on probe failure
-            self.tooltip = f'PP: probe error — {str(e)[:60]}'
+        except Exception:
+            self.score = None
+            self.grade_str = 'UNKNOWN'
+            self.gates = {}
+            self.last_alert_score = None
+            self.tooltip = 'PP: Unknown; probe error'
             try:
-                self.icon.title = self.tooltip
+                self._update_icon()
             except Exception:
                 pass
 
     def _update_icon(self):
         """Refresh the tray icon image and tooltip."""
         color = self._get_grade_color(self.grade_str)
-        score_text = str(self.score)
+        score_text = '?' if self.score is None else str(self.score)
         self.icon.icon = self._create_icon(score_text, color)
         self.icon.title = self.tooltip
 

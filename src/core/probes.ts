@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import os from 'node:os';
+import { Buffer } from 'node:buffer';
 
 /** Safe integer parser — never returns NaN */
 function safeInt(s: string): number {
@@ -37,6 +38,11 @@ function runPS(script: string, timeout = 10_000): string {
   return runFile('powershell', ['-NoProfile', '-NoLogo', '-Command', script], timeout);
 }
 
+function sleepSync(milliseconds: number): void {
+  const signal = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+  Atomics.wait(signal, 0, 0, milliseconds);
+}
+
 // ─── MEMORY ─────────────────────────────────────────────────────
 export interface MemoryInfo {
   totalMB: number;
@@ -53,10 +59,13 @@ export function probeMemory(): MemoryInfo {
 
 // ─── CPU ────────────────────────────────────────────────────────
 export interface CpuInfo {
+  status?: 'measured' | 'unknown';
   model: string;
   cores: number;
   logicalCores: number;
   loadPct: number; // 0-100 CPU usage percentage
+  systemLoadPct: number; // kernel + interrupt share of sampled CPU time
+  sampleMs: number;
 }
 
 export function probeCpu(): CpuInfo {
@@ -65,36 +74,112 @@ export function probeCpu(): CpuInfo {
 
   // Physical cores: platform-specific
   let cores = Math.ceil(logicalCores / 2); // default: assume HT
-  if (os.platform() === 'win32') {
-    const wmicOut = runFile('wmic', ['cpu', 'get', 'NumberOfCores', '/format:list']);
-    const match = wmicOut.match(/NumberOfCores=(\d+)/);
-    if (match) cores = safeInt(match[1]);
-  } else if (os.platform() === 'darwin') {
+  if (os.platform() === 'darwin') {
     const out = runFile('sysctl', ['-n', 'hw.physicalcpu']);
     if (out) cores = safeInt(out);
-  } else {
+  } else if (os.platform() === 'linux') {
     // Linux: count unique core ids
     const out = runFile('grep', ['-c', '^processor', '/proc/cpuinfo']);
     if (out) cores = Math.ceil(safeInt(out) / 2);
   }
 
-  // CPU load: os.loadavg() returns [0,0,0] on Windows — use wmic instead
-  let loadPct = 0;
-  if (os.platform() === 'win32') {
-    const wmicLoad = runFile('wmic', ['cpu', 'get', 'LoadPercentage', '/format:list']);
-    const loadMatch = wmicLoad.match(/LoadPercentage=(\d+)/);
-    if (loadMatch) loadPct = safeInt(loadMatch[1]);
-  } else {
-    const avg = os.loadavg()[0] ?? 0;
-    loadPct = Math.min(100, Math.round((avg / logicalCores) * 100));
+  // A short os.cpus() delta is fast, cross-platform, and avoids deprecated WMIC timeouts.
+  const sampleMs = 350;
+  const before = os.cpus();
+  sleepSync(sampleMs);
+  const after = os.cpus();
+  let idleDelta = 0;
+  let totalDelta = 0;
+  let systemDelta = 0;
+  let valid = before.length > 0 && before.length === after.length;
+  for (let index = 0; index < Math.min(before.length, after.length); index++) {
+    const start = before[index].times;
+    const end = after[index].times;
+    if (['user', 'nice', 'sys', 'idle', 'irq'].some(key => {
+      const k = key as keyof typeof start;
+      return !Number.isFinite(start[k]) || !Number.isFinite(end[k]) || end[k] < start[k];
+    })) valid = false;
+    const idle = Math.max(0, end.idle - start.idle);
+    // Windows kernel busy time already contains interrupt time (libuv util.c).
+    const irq = os.platform() === 'win32' ? 0 : Math.max(0, end.irq - start.irq);
+    const system = Math.max(0, end.sys - start.sys) + irq;
+    const total = Math.max(0,
+      (end.user - start.user) +
+      (end.nice - start.nice) +
+      (end.sys - start.sys) +
+      (end.idle - start.idle) +
+      irq
+    );
+    idleDelta += idle;
+    systemDelta += system;
+    totalDelta += total;
   }
+  const loadPct = totalDelta > 0 ? Math.min(100, Math.max(0, Math.round((totalDelta - idleDelta) / totalDelta * 100))) : 0;
+  const systemLoadPct = totalDelta > 0 ? Math.min(100, Math.max(0, Math.round(systemDelta / totalDelta * 100))) : 0;
 
   return {
+    status: valid && totalDelta > 0 ? 'measured' : 'unknown',
     model: cpus[0]?.model ?? 'unknown',
     cores,
     logicalCores,
     loadPct,
+    systemLoadPct,
+    sampleMs,
   };
+}
+
+// ─── RECENT APPLICATION CRASHES ───────────────────────────────
+export interface CrashLoopInfo {
+  status?: 'measured' | 'unknown' | 'unsupported';
+  windowMinutes: number;
+  totalCrashes: number;
+  topApp: string;
+  topAppCrashes: number;
+  apps: Array<{ name: string; count: number }>;
+}
+
+export function probeCrashLoops(windowMinutes = 15): CrashLoopInfo {
+  const boundedMinutes = Math.max(1, Math.min(120, Math.round(windowMinutes)));
+  const empty: CrashLoopInfo = {
+    status: os.platform() === 'win32' ? 'unknown' : 'unsupported',
+    windowMinutes: boundedMinutes,
+    totalCrashes: 0,
+    topApp: '',
+    topAppCrashes: 0,
+    apps: [],
+  };
+  if (os.platform() !== 'win32') return empty;
+
+  const script = [
+    '$ErrorActionPreference = "Stop";',
+    `$events = @(); try { $events = @(Get-WinEvent -FilterHashtable @{LogName="Application"; ProviderName="Application Error"; Id=1000; StartTime=(Get-Date).AddMinutes(-${boundedMinutes})} -ErrorAction Stop) } catch { if ($_.FullyQualifiedErrorId -notlike "NoMatchingEventsFound*") { throw } };`,
+    '$apps = @();',
+    'foreach ($event in $events) { $xml = [xml]$event.ToXml(); $app = @($xml.Event.EventData.Data | Where-Object { $_.Name -eq "AppName" }); if ($app.Count -ne 1 -or [string]::IsNullOrWhiteSpace($app[0].InnerText)) { throw "Unrecognized crash event schema" }; $apps += $app[0].InnerText };',
+    '$groups = @($apps | Group-Object | Sort-Object Count -Descending | Select-Object -First 10 @{n="name";e={$_.Name}},@{n="count";e={$_.Count}});',
+    '$top = $groups | Select-Object -First 1;',
+    `[pscustomobject]@{status="measured";windowMinutes=${boundedMinutes};totalCrashes=$apps.Count;topApp=if($top){$top.name}else{""};topAppCrashes=if($top){$top.count}else{0};apps=$groups} | ConvertTo-Json -Compress -Depth 4`,
+  ].join(' ');
+
+  const raw = runPS(script, 8_000);
+  if (!raw) return empty;
+  try {
+    const parsed = JSON.parse(raw) as Partial<CrashLoopInfo>;
+    if (parsed.status !== 'measured' || !Number.isInteger(parsed.totalCrashes) || Number(parsed.totalCrashes) < 0 || !Number.isInteger(parsed.topAppCrashes) || Number(parsed.topAppCrashes) < 0 || Number(parsed.topAppCrashes) > Number(parsed.totalCrashes) || !Array.isArray(parsed.apps)) return empty;
+    if (typeof parsed.topApp !== 'string' || (Number(parsed.totalCrashes) > 0 && (!parsed.topApp || !Number(parsed.topAppCrashes)))
+      || parsed.apps.some(app => !app || typeof app.name !== 'string' || !app.name || !Number.isInteger(app.count) || app.count < 1)) return empty;
+    return {
+      status: 'measured',
+      windowMinutes: boundedMinutes,
+      totalCrashes: Number(parsed.totalCrashes ?? 0),
+      topApp: String(parsed.topApp ?? ''),
+      topAppCrashes: Number(parsed.topAppCrashes ?? 0),
+      apps: Array.isArray(parsed.apps)
+        ? parsed.apps.map(app => ({ name: String(app.name ?? ''), count: Number(app.count ?? 0) }))
+        : [],
+    };
+  } catch {
+    return empty;
+  }
 }
 
 // ─── DISK ───────────────────────────────────────────────────────
@@ -187,6 +272,7 @@ export function probeGpu(): GpuInfo | null {
 
 // ─── PROCESSES ──────────────────────────────────────────────────
 export interface ProcessInfo {
+  status?: 'measured' | 'unknown';
   totalProcesses: number;
   nodeCount: number;
   claudeCount: number;
@@ -195,6 +281,12 @@ export interface ProcessInfo {
   vscodeCount: number;
   edgeChromeTabs: number;
   protectedCount: number;
+  codexTaskRuntimeCount: number;
+  mcpCount: number;
+  mcpProcessCount: number;
+  mcpMemoryMB: number;
+  duplicateMcpProcesses: number;
+  agentTreeMemoryMB: number;
   processes: ProcessConsumer[];
   topConsumers: ProcessConsumer[];
 }
@@ -298,7 +390,12 @@ function redactCommandLine(command: string): string {
 function classifyProcess(name: string, command: string): Pick<ProcessConsumer, 'role' | 'protected' | 'protectionReason'> {
   const n = name.toLowerCase();
   const cmd = command.toLowerCase();
-  const looksLikeMcpServer =
+  const canHostOrLaunchMcp = new Set([
+    'node.exe', 'node', 'python.exe', 'python', 'pythonw.exe', 'pythonw',
+    'bun.exe', 'bun', 'deno.exe', 'deno', 'railway.exe', 'railway',
+    'cmd.exe', 'cmd', 'bash.exe', 'bash', 'sh.exe', 'sh',
+  ]).has(n);
+  const looksLikeMcpServer = canHostOrLaunchMcp && (
     cmd.includes('modelcontextprotocol') ||
     /(^|[\s"'\\/])(mcp|mcp-server|mcpserver)([\s"'\\/]|$)/.test(cmd) ||
     /(^|[\s"'\\/])(serve|server)\s+mcp([\s"']|$)/.test(cmd) ||
@@ -308,13 +405,22 @@ function classifyProcess(name: string, command: string): Pick<ProcessConsumer, '
     cmd.includes('railway.js" mcp') ||
     cmd.includes("railway.js' mcp") ||
     cmd.includes('railway.exe mcp') ||
-    cmd.includes('headroom mcp serve');
+    cmd.includes('mcp-server.js') ||
+    cmd.includes('starlight-mcp.js') ||
+    cmd.includes('mcp-obsidian') ||
+    cmd.includes('/packages/mcp/') ||
+    cmd.includes('\\packages\\mcp\\') ||
+    cmd.includes('headroom mcp serve')
+  );
 
   if (n.includes('antigravity') || cmd.includes('antigravity')) {
     return { role: 'ai-agent', protected: true, protectionReason: 'active coding-agent workspace' };
   }
   if (PROCESS_MATCHERS.claude(n) || PROCESS_MATCHERS.codex(n) || PROCESS_MATCHERS.cursor(n)) {
     return { role: 'ai-agent', protected: true, protectionReason: 'active AI agent session' };
+  }
+  if ((n === 'node_repl.exe' || n === 'node_repl') && cmd.includes('openai') && cmd.includes('codex')) {
+    return { role: 'ai-agent', protected: true, protectionReason: 'Codex task runtime' };
   }
   if (n.includes('lmstudio') || n.includes('llmster') || cmd.includes('.lmstudio') || n === 'ollama.exe' || n === 'ollama') {
     return { role: 'local-model', protected: true, protectionReason: 'local model runtime' };
@@ -412,22 +518,69 @@ function addProcessCounts(info: ProcessInfo, name: string): void {
   if (PROCESS_MATCHERS.browser(n)) info.edgeChromeTabs++;
 }
 
+function finalizeProcessInfo(info: ProcessInfo): void {
+  const mcpProcesses = info.processes.filter(proc => proc.role === 'mcp');
+  info.codexTaskRuntimeCount = info.processes.filter(proc => {
+    const name = proc.name.toLowerCase();
+    const command = proc.command.toLowerCase();
+    return (name === 'node_repl.exe' || name === 'node_repl') && command.includes('openai') && command.includes('codex');
+  }).length;
+  info.mcpProcessCount = mcpProcesses.length;
+  info.mcpMemoryMB = Math.round(mcpProcesses.reduce((sum, proc) => sum + proc.memMB, 0) * 10) / 10;
+
+  const mcpPids = new Set(mcpProcesses.map(proc => proc.pid));
+  const mcpParentPids = new Set(mcpProcesses.filter(proc => mcpPids.has(proc.parentPid)).map(proc => proc.parentPid));
+  const mcpServers = mcpProcesses.filter(proc => !mcpParentPids.has(proc.pid));
+  info.mcpCount = mcpServers.length;
+
+  const commandCounts = new Map<string, number>();
+  for (const proc of mcpServers) {
+    const signature = proc.command.toLowerCase().replace(/\s+/g, ' ').trim();
+    commandCounts.set(signature, (commandCounts.get(signature) ?? 0) + 1);
+  }
+  info.duplicateMcpProcesses = [...commandCounts.values()].reduce((sum, count) => sum + Math.max(0, count - 1), 0);
+
+  const children = new Map<number, number[]>();
+  for (const proc of info.processes) {
+    const siblings = children.get(proc.parentPid) ?? [];
+    siblings.push(proc.pid);
+    children.set(proc.parentPid, siblings);
+  }
+  const agentRoots = info.processes.filter(proc => proc.role === 'ai-agent' && (proc.name.toLowerCase() !== 'node_repl.exe' && proc.name.toLowerCase() !== 'node_repl'));
+  const agentTreePids = new Set<number>();
+  const queue = agentRoots.map(proc => proc.pid);
+  while (queue.length > 0) {
+    const pid = queue.shift();
+    if (pid === undefined || agentTreePids.has(pid)) continue;
+    agentTreePids.add(pid);
+    queue.push(...(children.get(pid) ?? []));
+  }
+  info.agentTreeMemoryMB = Math.round(info.processes
+    .filter(proc => agentTreePids.has(proc.pid))
+    .reduce((sum, proc) => sum + proc.memMB, 0) * 10) / 10;
+}
+
 function probeWindowsProcesses(info: ProcessInfo): boolean {
   const ps = [
-    '$ErrorActionPreference = "SilentlyContinue";',
+    '$ErrorActionPreference = "Stop";',
     'Get-CimInstance Win32_Process |',
     'Select-Object ProcessId,ParentProcessId,Name,CommandLine,WorkingSetSize |',
     'ConvertTo-Json -Compress -Depth 2',
   ].join(' ');
   const rows = parseJsonArray<WinProcessRow>(runPS(ps, 15_000));
-  if (rows.length === 0) return false;
+  if (rows.length === 0 || rows.some(row => !row || typeof row !== 'object')) return false;
+  info.status = 'measured';
 
   info.totalProcesses = rows.length;
 
   const consumers: ProcessConsumer[] = [];
   for (const row of rows) {
     const name = String(row.Name ?? '').trim();
-    if (!name) continue;
+    if (!name) { info.status = 'unknown'; continue; }
+    if (!Number.isInteger(Number(row.ProcessId)) || Number(row.ProcessId) < 0 || !Number.isInteger(Number(row.ParentProcessId)) || Number(row.ParentProcessId) < 0 || !Number.isFinite(Number(row.WorkingSetSize)) || Number(row.WorkingSetSize) < 0) info.status = 'unknown';
+    // Protected OS processes commonly deny CommandLine. Missing command data
+    // for runtimes that can host agents/MCP/builds cannot establish headroom.
+    if (/^(node|node_repl|pythonw?[\d.]*|bun|deno|uvx?|npx|cmd|powershell|pwsh|bash|sh|railway|headroom|claude|codex)(\.exe|\.cmd)?$/i.test(name) && (typeof row.CommandLine !== 'string' || !row.CommandLine.trim())) info.status = 'unknown';
 
     addProcessCounts(info, name);
 
@@ -453,12 +606,14 @@ function probeWindowsProcesses(info: ProcessInfo): boolean {
 
   info.processes = consumers.sort((a, b) => b.memMB - a.memMB);
   info.topConsumers = info.processes.slice(0, 20);
+  finalizeProcessInfo(info);
 
   return true;
 }
 
 export function probeProcesses(): ProcessInfo {
   const info: ProcessInfo = {
+    status: 'unknown',
     totalProcesses: 0,
     nodeCount: 0,
     claudeCount: 0,
@@ -467,6 +622,12 @@ export function probeProcesses(): ProcessInfo {
     vscodeCount: 0,
     edgeChromeTabs: 0,
     protectedCount: 0,
+    codexTaskRuntimeCount: 0,
+    mcpCount: 0,
+    mcpProcessCount: 0,
+    mcpMemoryMB: 0,
+    duplicateMcpProcesses: 0,
+    agentTreeMemoryMB: 0,
     processes: [],
     topConsumers: [],
   };
@@ -487,12 +648,14 @@ export function probeProcesses(): ProcessInfo {
     const ps = runFile('ps', ['-eo', 'pid=,ppid=,rss=,comm=,args=']);
     const lines = ps.split('\n').filter(l => l.trim());
     info.totalProcesses = lines.length;
+    info.status = lines.length > 0 ? 'measured' : 'unknown';
 
     for (const line of lines) {
       const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/);
-      if (!match) continue;
+      if (!match) { info.status = 'unknown'; continue; }
       const [, pid, ppid, rssKB, comm, args] = match;
       const name = comm.split('/').pop() ?? comm;
+      if (/^(node|node_repl|pythonw?[\d.]*|bun|deno|uvx?|npx|bash|sh|railway|headroom|claude|codex)$/i.test(name) && !args.trim()) info.status = 'unknown';
       const command = redactCommandLine(args || comm);
       addProcessCounts(info, name);
       const classification = classifyProcess(name, command);
@@ -512,6 +675,7 @@ export function probeProcesses(): ProcessInfo {
     info.processes = info.processes
       .sort((a, b) => b.memMB - a.memMB);
     info.topConsumers = info.processes.slice(0, 20);
+    finalizeProcessInfo(info);
   }
 
   return info;
@@ -567,8 +731,12 @@ export function probeGit(cwd: string): GitInfo {
 
   // Repo size — platform-aware
   if (os.platform() === 'win32') {
+    // Pass the entire path as encoded data, including apostrophes/smart quotes.
+    // argv protects the outer process invocation, not PowerShell's script parser.
+    const gitDirectory = Buffer.from(join(cwd, '.git'), 'utf8').toString('base64');
     const sizeOut = runPS(
-      `(Get-ChildItem -Recurse -Force '${cwd}\\.git' -ErrorAction SilentlyContinue | ` +
+      `$gitDirectory = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${gitDirectory}')); ` +
+      `(Get-ChildItem -Recurse -Force -LiteralPath $gitDirectory -ErrorAction SilentlyContinue | ` +
       `Measure-Object -Property Length -Sum).Sum / 1MB`
     );
     info.repoSizeMB = Math.round(safeInt(sizeOut));

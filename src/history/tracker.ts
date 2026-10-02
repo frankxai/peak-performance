@@ -37,7 +37,7 @@ export class TrendTracker {
       timestamp: audit.timestamp,
       score: audit.totalScore,
       grade: audit.grade,
-      gates: Object.fromEntries(audit.gates.map(g => [g.id, g.score])) as Record<GateId, number>,
+      gates: Object.fromEntries(audit.gates.map(g => [g.id, g.score])) as Record<GateId, number | null>,
       trigger,
     };
 
@@ -64,6 +64,7 @@ export class TrendTracker {
 
     const current = this.entries[this.entries.length - 1];
     const previous = this.entries[this.entries.length - 2];
+    if (current.score === null || previous.score === null || !Number.isFinite(current.score) || !Number.isFinite(previous.score)) return null;
     const delta = current.score - previous.score;
 
     return {
@@ -75,8 +76,9 @@ export class TrendTracker {
   }
 
   getBestWorst(): { best: TrendEntry; worst: TrendEntry } | null {
-    if (this.entries.length === 0) return null;
-    const sorted = [...this.entries].sort((a, b) => a.score - b.score);
+    const known = this.entries.filter((e): e is TrendEntry & { score: number } => Number.isFinite(e.score) && e.score !== null);
+    if (known.length === 0) return null;
+    const sorted = known.sort((a, b) => a.score - b.score);
     return { worst: sorted[0], best: sorted[sorted.length - 1] };
   }
 }

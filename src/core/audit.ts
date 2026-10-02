@@ -6,7 +6,11 @@ import type { AuditResult, PPConfig, Recommendation } from '../types.js';
 import { DEFAULT_CONFIG } from '../types.js';
 import {
   probeMemory, probeCpu, probeDisk, probeGpu,
-  probeProcesses, probeGit, probeSecrets, probeTemp, probeUptime,
+  probeProcesses, probeGit, probeSecrets, probeTemp, probeUptime, probeCrashLoops,
+} from './probes.js';
+import type {
+  MemoryInfo, CpuInfo, DiskInfo, GpuInfo, ProcessInfo,
+  GitInfo, SecretsInfo, TempInfo, CrashLoopInfo,
 } from './probes.js';
 import {
   scoreDisk, scoreMemory, scoreCpuGpu, scoreProcesses,
@@ -14,7 +18,25 @@ import {
   scoreAgentLoad, scoreSystem, grade,
 } from '../gates/scoring.js';
 
-export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
+export interface AuditProbeSnapshot {
+  mem: MemoryInfo;
+  cpu: CpuInfo;
+  disk: DiskInfo;
+  gpu: GpuInfo | null;
+  procs: ProcessInfo;
+  git: GitInfo;
+  secrets: SecretsInfo;
+  temp: TempInfo;
+  uptime: { uptimeHours: number };
+  crashes: CrashLoopInfo;
+}
+
+export interface AuditExecution {
+  audit: AuditResult;
+  snapshot: AuditProbeSnapshot;
+}
+
+export function runAuditWithProbes(config: Partial<PPConfig> = {}): AuditExecution {
   const cfg = { ...DEFAULT_CONFIG, ...config };
 
   // Run all probes
@@ -27,13 +49,23 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
   const secrets = probeSecrets(cfg.cwd);
   const temp = probeTemp();
   const uptime = probeUptime();
+  const crashes = probeCrashLoops();
+
+  const snapshot = { mem, cpu, disk, gpu, procs, git, secrets, temp, uptime, crashes };
+  return { audit: scoreAuditSnapshot(snapshot, cfg), snapshot };
+}
+
+/** Score one collected snapshot without rerunning machine probes. */
+export function scoreAuditSnapshot(snapshot: AuditProbeSnapshot, config: Partial<PPConfig> = {}): AuditResult {
+  const cfg = { ...DEFAULT_CONFIG, ...config };
+  const { mem, cpu, disk, gpu, procs, git, secrets, temp, uptime, crashes } = snapshot;
 
   // Score all gates
   const gates = [
     scoreDisk(disk),
     scoreMemory(mem),
     scoreCpuGpu(cpu, gpu),
-    scoreProcesses(procs),
+    scoreProcesses(procs, crashes),
     scoreGit(git),
     scoreSecrets(secrets),
     scoreWorkspace(temp),
@@ -42,12 +74,24 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
     scoreSystem(disk, mem, uptime.uptimeHours),
   ];
 
-  const totalScore = gates.reduce((sum, g) => sum + g.score, 0);
+  const unknownGates = gates.filter(g => g.score === null || g.status === 'UNKNOWN');
+  const rawScore = unknownGates.length ? null : gates.reduce((sum, g) => sum + (g.score ?? 0), 0);
+  const scoreCaps: string[] = [];
+  let totalScore = rawScore;
+  if (totalScore === null) {
+    scoreCaps.push(`Incomplete probe evidence: ${unknownGates.map(g => g.id).join(', ')}`);
+  } else if (crashes.topAppCrashes >= 10) {
+    totalScore = Math.min(totalScore, 49);
+    scoreCaps.push(`${crashes.topApp} crashed ${crashes.topAppCrashes} times in ${crashes.windowMinutes} minutes`);
+  } else if (gates.some(gate => gate.status === 'CRIT')) {
+    totalScore = Math.min(totalScore, 69);
+    scoreCaps.push('At least one Ten Gate is critical');
+  }
 
   // Collect recommendations
   const recommendations: Recommendation[] = [];
 
-  if (disk.freeGB < 20) {
+  if (gates.find(g => g.id === 'disk')?.score !== null && disk.freeGB < 20) {
     recommendations.push({
       priority: 'urgent', gate: 'disk',
       message: `Only ${disk.freeGB}GB disk free — run: npm cache clean --force`,
@@ -56,10 +100,18 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
     });
   }
 
-  if (mem.usedPct > 85) {
+  if (gates.find(g => g.id === 'memory')?.score !== null && mem.usedPct > 85) {
     recommendations.push({
       priority: 'high', gate: 'memory',
       message: `RAM at ${mem.usedPct}% — close unused apps`,
+      autoFixable: false,
+    });
+  }
+
+  if (cpu.status === 'measured' && (cpu.loadPct > 80 || cpu.systemLoadPct > 40)) {
+    recommendations.push({
+      priority: 'high', gate: 'cpu',
+      message: `CPU is ${cpu.loadPct}% busy (${cpu.systemLoadPct}% kernel/interrupt); inspect active process and I/O pressure before launching more work`,
       autoFixable: false,
     });
   }
@@ -76,6 +128,22 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
     recommendations.push({
       priority: 'medium', gate: 'processes',
       message: `${procs.nodeCount} node processes — check for orphans`,
+      autoFixable: false,
+    });
+  }
+
+  if (procs.codexTaskRuntimeCount > 8 || procs.duplicateMcpProcesses > 20) {
+    recommendations.push({
+      priority: 'high', gate: 'agents',
+      message: `${procs.codexTaskRuntimeCount} Codex task runtimes own ${procs.mcpCount} MCP servers (${procs.mcpProcessCount} tree processes) using ~${procs.mcpMemoryMB}MB; archive or close inactive tasks instead of killing MCP children`,
+      autoFixable: false,
+    });
+  }
+
+  if (crashes.topAppCrashes >= 3) {
+    recommendations.push({
+      priority: crashes.topAppCrashes >= 10 ? 'urgent' : 'high', gate: 'processes',
+      message: `${crashes.topApp} crashed ${crashes.topAppCrashes} times in ${crashes.windowMinutes} minutes; stop the respawn loop through the owning app or service before cleanup`,
       autoFixable: false,
     });
   }
@@ -109,13 +177,21 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
   const priorityOrder = { urgent: 0, high: 1, medium: 2, low: 3 };
   recommendations.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
 
-  return {
+  const audit: AuditResult = {
     timestamp: new Date().toISOString(),
     hostname: os.hostname(),
     platform: os.platform(),
     totalScore,
+    rawScore,
+    scoreCaps,
     grade: grade(totalScore),
     gates,
     recommendations,
   };
+
+  return audit;
+}
+
+export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
+  return runAuditWithProbes(config).audit;
 }

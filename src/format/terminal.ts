@@ -7,6 +7,7 @@ import type { AuditResult, TrendEntry } from '../types.js';
 import type { ProcessInfo } from '../core/probes.js';
 import type { MaintenancePlan } from '../core/maintenance.js';
 import type { OvernightGuardPlan } from '../core/overnight.js';
+import type { PreflightPlan } from '../core/preflight.js';
 
 type Theme = 'arcanea' | 'plain';
 
@@ -25,7 +26,8 @@ function statusIcon(status: string): string {
   }
 }
 
-function scoreBar(score: number): string {
+function scoreBar(score: number | null): string {
+  if (score === null) return '??????????';
   const filled = Math.round(score);
   const empty = 10 - filled;
   const color = score >= 7 ? '\x1b[32m' : score >= 4 ? '\x1b[33m' : '\x1b[31m';
@@ -33,6 +35,7 @@ function scoreBar(score: number): string {
 }
 
 function gradeColor(grade: string): string {
+  if (grade === 'UNKNOWN') return '\x1b[90m';
   if (grade.startsWith('S') || grade.startsWith('A')) return '\x1b[32m';
   if (grade.startsWith('B')) return '\x1b[36m';
   if (grade.startsWith('C')) return '\x1b[33m';
@@ -52,7 +55,10 @@ export function formatAudit(audit: AuditResult, theme: Theme = 'arcanea'): strin
   lines.push(`\x1b[1m  Peak Performance Audit\x1b[0m`);
   lines.push(`  ${audit.timestamp} | ${audit.hostname} | ${audit.platform}`);
   lines.push('');
-  lines.push(`  Score: ${gc}\x1b[1m${audit.totalScore}/100\x1b[0m | Grade: ${gc}\x1b[1m${audit.grade}\x1b[0m`);
+  lines.push(`  Score: ${gc}\x1b[1m${audit.totalScore === null ? 'Unknown' : `${audit.totalScore}/100`}\x1b[0m | Grade: ${gc}\x1b[1m${audit.grade}\x1b[0m`);
+  if (audit.scoreCaps.length > 0) {
+    lines.push(`  \x1b[31m${audit.totalScore === null ? 'Incomplete evidence' : 'Critical cap applied'}\x1b[0m (raw Ten Gate sum ${audit.rawScore ?? 'Unknown'}): ${audit.scoreCaps.join('; ')}`);
+  }
   lines.push('');
   lines.push('  \x1b[90m─────────────────────────────────────────────────\x1b[0m');
 
@@ -61,7 +67,7 @@ export function formatAudit(audit: AuditResult, theme: Theme = 'arcanea'): strin
     const name = gateName(gate.id, theme).padEnd(28);
     const icon = statusIcon(gate.status);
     const bar = scoreBar(gate.score);
-    const scoreStr = `${gate.score}/10`.padStart(5);
+    const scoreStr = `${gate.score === null ? 'Unknown' : `${gate.score}/10`}`.padStart(5);
     lines.push(`  ${icon} ${name} ${bar} ${scoreStr}  ${gate.detail}`);
   }
 
@@ -97,17 +103,21 @@ export function formatTrend(entries: TrendEntry[], theme: Theme = 'arcanea'): st
     const date = entry.timestamp.slice(0, 16).replace('T', ' ');
     const gc = gradeColor(entry.grade);
     const trigger = entry.trigger ? ` (${entry.trigger})` : '';
-    lines.push(`  ${date}  ${gc}${entry.score}/100 ${entry.grade}\x1b[0m${trigger}`);
+    lines.push(`  ${date}  ${gc}${entry.score === null ? 'Unknown' : `${entry.score}/100`} ${entry.grade}\x1b[0m${trigger}`);
   }
 
   // Show delta if available
   if (entries.length >= 2) {
     const last = entries[entries.length - 1];
     const prev = entries[entries.length - 2];
-    const delta = last.score - prev.score;
-    const arrow = delta > 0 ? '\x1b[32m↑' : delta < 0 ? '\x1b[31m↓' : '\x1b[90m→';
-    lines.push('');
-    lines.push(`  ${arrow} ${Math.abs(delta)} points\x1b[0m since last audit`);
+    if (last.score !== null && prev.score !== null && Number.isFinite(last.score) && Number.isFinite(prev.score)) {
+      const delta = last.score - prev.score;
+      const arrow = delta > 0 ? '\x1b[32m↑' : delta < 0 ? '\x1b[31m↓' : '\x1b[90m→';
+      lines.push('');
+      lines.push(`  ${arrow} ${Math.abs(delta)} points\x1b[0m since last audit`);
+    } else {
+      lines.push('  Change unknown; incomplete audit evidence.');
+    }
   }
 
   lines.push('');
@@ -121,7 +131,7 @@ export function formatCompact(audit: AuditResult, theme: Theme = 'arcanea'): str
   const warns = audit.gates.filter(g => g.status === 'WARN').length;
   const critStr = crits > 0 ? ` \x1b[31m${crits}CRIT\x1b[0m` : '';
   const warnStr = warns > 0 ? ` \x1b[33m${warns}WARN\x1b[0m` : '';
-  return `PP ${gc}${audit.totalScore}/${audit.grade}\x1b[0m${critStr}${warnStr}`;
+  return `PP ${gc}${audit.totalScore ?? 'Unknown'}/${audit.grade}\x1b[0m${critStr}${warnStr}`;
 }
 
 /** Compact one-line maintenance format for overnight hooks and dashboards */
@@ -131,11 +141,12 @@ export function formatMaintenanceCompact(plan: MaintenancePlan, options: { color
   const reset = color ? '\x1b[0m' : '';
   const actionStr = plan.actions.length > 0 ? ` | ${plan.actions.length} actions` : '';
   return [
-    `PP ${gc}${plan.metrics.score}/${plan.metrics.grade}${reset}`,
+    `PP ${gc}${plan.metrics.score ?? 'Unknown'}/${plan.metrics.grade}${reset}`,
     `${plan.posture}`,
     `swarms ${plan.swarmPosture}`,
-    `RAM ${plan.metrics.ramUsedPct}% (${plan.metrics.ramFreeMB}MB free)`,
-    `proc ${plan.metrics.totalProcesses}`,
+    plan.probeEvidence?.memory === 'measured' ? `RAM ${plan.metrics.ramUsedPct}% (${plan.metrics.ramFreeMB}MB free)` : 'RAM Unknown',
+    plan.probeEvidence?.cpu === 'measured' ? `CPU ${plan.metrics.cpuLoadPct}%` : 'CPU Unknown',
+    plan.probeEvidence?.processes === 'measured' ? `proc ${plan.metrics.totalProcesses}` : 'proc Unknown',
   ].join(' | ') + actionStr;
 }
 
@@ -150,7 +161,8 @@ export function formatMarkdown(audit: AuditResult, theme: Theme = 'arcanea'): st
 
   lines.push(`# Peak Performance Audit — ${audit.timestamp.slice(0, 10)}`);
   lines.push('');
-  lines.push(`**Score:** ${audit.totalScore}/100 | **Grade:** ${audit.grade}`);
+  lines.push(`**Score:** ${audit.totalScore === null ? 'Unknown' : `${audit.totalScore}/100`} | **Grade:** ${audit.grade}`);
+  if (audit.scoreCaps.length > 0) lines.push(`**${audit.totalScore === null ? 'Incomplete evidence' : 'Critical cap'}:** raw Ten Gate sum ${audit.rawScore ?? 'Unknown'}; ${audit.scoreCaps.join('; ')}`);
   lines.push(`**Host:** ${audit.hostname} | **Platform:** ${audit.platform}`);
   lines.push('');
   lines.push('## Gate Scores');
@@ -160,7 +172,7 @@ export function formatMarkdown(audit: AuditResult, theme: Theme = 'arcanea'): st
 
   for (const gate of audit.gates) {
     const name = gateName(gate.id, theme);
-    lines.push(`| ${name} | ${gate.score}/10 | ${gate.status} | ${gate.detail} |`);
+    lines.push(`| ${name} | ${gate.score === null ? 'Unknown' : `${gate.score}/10`} | ${gate.status} | ${gate.detail} |`);
   }
 
   if (audit.recommendations.length > 0) {
@@ -185,7 +197,8 @@ export function formatProcessInspection(procs: ProcessInfo, limit = 20): string 
   lines.push('');
   lines.push('\x1b[1m  Peak Performance Process Inspection\x1b[0m');
   lines.push('');
-  lines.push(`  Total: ${procs.totalProcesses} | Agents: ${agents} | Node: ${procs.nodeCount} | Protected: ${procs.protectedCount}`);
+  lines.push(`  Total: ${procs.totalProcesses} | Named agents: ${agents} | Codex task runtimes: ${procs.codexTaskRuntimeCount} | Node: ${procs.nodeCount} | Protected: ${procs.protectedCount}`);
+  lines.push(`  MCP: ${procs.mcpCount} servers (${procs.mcpProcessCount} tree processes) / ${procs.mcpMemoryMB}MB | Duplicate server copies: ${procs.duplicateMcpProcesses} | Agent tree: ${procs.agentTreeMemoryMB}MB`);
   lines.push(`  Browsers: ${procs.edgeChromeTabs} | Editors: ${procs.vscodeCount}`);
   lines.push(`  Showing: ${visibleRows.length}/${rows.length} process rows`);
   lines.push('');
@@ -219,8 +232,12 @@ export function formatMaintenancePlan(plan: MaintenancePlan): string {
   lines.push('\x1b[1m  Peak Performance Maintenance Plan\x1b[0m');
   lines.push('');
   lines.push(`  ${plan.summary}`);
-  lines.push(`  RAM: ${plan.metrics.ramUsedPct}% used (${plan.metrics.ramFreeMB}MB free) | Disk: ${plan.metrics.diskFreeGB}GB free | Uptime: ${plan.metrics.uptimeHours}h`);
-  lines.push(`  Processes: ${plan.metrics.totalProcesses} total | ${plan.metrics.namedAgentCount} named agents | ${plan.metrics.nodeCount} node | ${plan.metrics.reviewableCount} reviewable`);
+  lines.push(`  RAM: ${plan.probeEvidence?.memory === 'measured' ? `${plan.metrics.ramUsedPct}% used (${plan.metrics.ramFreeMB}MB free)` : 'Unknown'} | Disk: ${plan.probeEvidence?.disk === 'measured' ? `${plan.metrics.diskFreeGB}GB free` : 'Unknown'} | Uptime: ${plan.metrics.uptimeHours}h`);
+  lines.push(plan.probeEvidence?.cpu === 'measured' ? `  CPU: ${plan.metrics.cpuLoadPct}% busy (${plan.metrics.cpuSystemLoadPct}% system/kernel)` : '  CPU: Unknown');
+  lines.push(plan.probeEvidence?.processes === 'measured' ? `  Processes: ${plan.metrics.totalProcesses} total | ${plan.metrics.namedAgentCount} named agents | ${plan.metrics.codexTaskRuntimeCount} Codex task runtimes | ${plan.metrics.nodeCount} node | ${plan.metrics.reviewableCount} reviewable` : '  Processes: Unknown; collection is partial or failed.');
+  lines.push(plan.probeEvidence?.processes === 'measured' ? `  MCP: ${plan.metrics.mcpCount} servers (${plan.metrics.mcpProcessCount} tree processes) / ${plan.metrics.mcpMemoryMB}MB | ${plan.metrics.duplicateMcpProcesses} duplicate server copies | agent tree ${plan.metrics.agentTreeMemoryMB}MB` : '  MCP: Unknown; process visibility is incomplete.');
+  if (plan.probeEvidence?.crashes !== 'measured') lines.push('  Crashes: Unknown (' + (plan.probeEvidence?.crashes ?? 'missing') + ')');
+  else if (plan.metrics.crashLoopCount > 0) lines.push(`  Crashes: ${plan.metrics.crashLoopApp} ${plan.metrics.crashLoopCount}x (${plan.metrics.recentCrashCount} total) in the recent window`);
   lines.push('');
   lines.push('  Reasons');
   for (const reason of plan.reasons) lines.push(`  - ${reason}`);
@@ -242,6 +259,39 @@ export function formatMaintenancePlan(plan: MaintenancePlan): string {
   return lines.join('\n');
 }
 
+export function formatPreflightPlan(plan: PreflightPlan): string {
+  const lines: string[] = [];
+  const color = plan.decision === 'allow' ? '\x1b[32m' : plan.decision === 'bounded' ? '\x1b[33m' : '\x1b[31m';
+
+  lines.push('');
+  lines.push('\x1b[1m  Peak Performance Workload Preflight\x1b[0m');
+  lines.push('');
+  lines.push(`  Decision: ${color}\x1b[1m${plan.decision.toUpperCase()}\x1b[0m | Workload: ${plan.workload}`);
+  lines.push(`  ${plan.summary}`);
+  lines.push(`  PP: ${plan.posture} | Swarms: ${plan.swarmPosture}`);
+  lines.push(`  RAM: ${plan.current.ramFreeMB}MB free | Required: ${plan.budget.requiredFreeMB}MB | Projected: ${plan.budget.projectedFreeMB}MB`);
+  lines.push(`  CPU: ${plan.current.cpuLoadPct}% (ceiling ${plan.budget.cpuCeilingPct}%) | Task runtimes: ${plan.current.codexTaskRuntimes}/${plan.budget.maxTaskRuntimes}`);
+  lines.push(`  Limit: ${plan.budget.maxParallelism} parallel | Timeout: ${plan.budget.timeoutMinutes || 'interactive'} minutes`);
+
+  if (plan.hardBlocks.length > 0) {
+    lines.push('');
+    lines.push('  Hard blocks');
+    for (const item of plan.hardBlocks) lines.push(`  - ${item}`);
+  }
+  if (plan.constraints.length > 0) {
+    lines.push('');
+    lines.push('  Constraints');
+    for (const item of plan.constraints) lines.push(`  - ${item}`);
+  }
+  if (plan.actions.length > 0) {
+    lines.push('');
+    lines.push('  Required actions');
+    for (const item of plan.actions) lines.push(`  - ${item}`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
 export function formatOvernightGuardPlan(plan: OvernightGuardPlan): string {
   const lines: string[] = [];
 
@@ -251,7 +301,7 @@ export function formatOvernightGuardPlan(plan: OvernightGuardPlan): string {
   lines.push(`  Directive: ${plan.directive.level} | New swarms: ${plan.directive.allowNewSwarms ? 'allowed when bounded' : 'hold'}`);
   lines.push(`  ${plan.directive.summary}`);
   lines.push(`  ${plan.maintenance.summary}`);
-  lines.push(`  RAM: ${plan.maintenance.metrics.ramUsedPct}% used (${plan.maintenance.metrics.ramFreeMB}MB free) | Disk: ${plan.maintenance.metrics.diskFreeGB}GB free | Uptime: ${plan.maintenance.metrics.uptimeHours}h`);
+  lines.push(`  RAM: ${plan.maintenance.probeEvidence?.memory === 'measured' ? `${plan.maintenance.metrics.ramUsedPct}% used (${plan.maintenance.metrics.ramFreeMB}MB free)` : 'Unknown'} | Disk: ${plan.maintenance.probeEvidence?.disk === 'measured' ? `${plan.maintenance.metrics.diskFreeGB}GB free` : 'Unknown'} | Uptime: ${plan.maintenance.metrics.uptimeHours}h`);
   lines.push(`  Processes: ${plan.processSnapshot.totalProcesses} total | ${plan.processSnapshot.nodeCount} node | ${plan.processSnapshot.reviewableCount} reviewable`);
   lines.push('');
   lines.push('  Queen instructions');

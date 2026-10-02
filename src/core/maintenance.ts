@@ -1,7 +1,8 @@
 import os from 'node:os';
 import type { AuditResult } from '../types.js';
-import { runAudit } from './audit.js';
-import { probeDisk, probeMemory, probeProcesses, probeUptime } from './probes.js';
+import { runAuditWithProbes } from './audit.js';
+import type { AuditProbeSnapshot } from './audit.js';
+import { probeMemory, probeCpu, probeDisk, probeProcesses, probeUptime, probeCrashLoops } from './probes.js';
 import type { ProcessInfo, ProcessRole } from './probes.js';
 
 export type MaintenancePosture = 'green' | 'watch' | 'constrain' | 'maintenance' | 'restart-soon';
@@ -21,13 +22,21 @@ export interface MaintenanceAction {
 }
 
 export interface MaintenancePlan {
+  probeEvidence?: {
+    sampledAt: string;
+    memory: 'measured' | 'unknown';
+    disk: 'measured' | 'unknown';
+    cpu: 'measured' | 'unknown';
+    processes: 'measured' | 'unknown';
+    crashes: 'measured' | 'unknown' | 'unsupported';
+  };
   timestamp: string;
   hostname: string;
   posture: MaintenancePosture;
   swarmPosture: SwarmPosture;
   summary: string;
   metrics: {
-    score: number;
+    score: number | null;
     grade: string;
     ramUsedPct: number;
     ramFreeMB: number;
@@ -36,12 +45,22 @@ export interface MaintenancePlan {
     totalProcesses: number;
     nodeCount: number;
     namedAgentCount: number;
+    codexTaskRuntimeCount: number;
     aiProcessCount: number;
     localModelCount: number;
     mcpCount: number;
+    mcpProcessCount: number;
+    mcpMemoryMB: number;
+    duplicateMcpProcesses: number;
+    agentTreeMemoryMB: number;
     devServerCount: number;
     buildCount: number;
     reviewableCount: number;
+    cpuLoadPct: number;
+    cpuSystemLoadPct: number;
+    recentCrashCount: number;
+    crashLoopApp: string;
+    crashLoopCount: number;
   };
   reasons: string[];
   actions: MaintenanceAction[];
@@ -63,12 +82,15 @@ function roleCount(procs: ProcessInfo, role: ProcessRole): number {
   return procs.processes.filter(proc => proc.role === role).length;
 }
 
-function choosePosture(plan: Pick<MaintenancePlan, 'metrics' | 'reasons'>): MaintenancePosture {
+function choosePosture(plan: Pick<MaintenancePlan, 'metrics' | 'reasons' | 'probeEvidence'>): MaintenancePosture {
   const m = plan.metrics;
-  if (m.ramUsedPct >= 94 || m.ramFreeMB < 2_000 || (m.uptimeHours > 168 && m.ramUsedPct >= 82)) return 'restart-soon';
-  if (m.diskFreeGB < 20 || m.ramUsedPct >= 88 || m.totalProcesses > 850 || m.nodeCount > 140) return 'maintenance';
-  if (m.ramUsedPct >= 82 || m.totalProcesses > 700 || m.nodeCount > 90 || m.namedAgentCount > 25) return 'constrain';
-  if (m.ramUsedPct >= 72 || m.uptimeHours > 72 || m.nodeCount > 60 || m.namedAgentCount > 12) return 'watch';
+  const e = plan.probeEvidence;
+  const memory = e?.memory === 'measured', disk = e?.disk === 'measured';
+  const cpu = e?.cpu === 'measured', processes = e?.processes === 'measured', crashes = e?.crashes === 'measured';
+  if (memory && (m.ramUsedPct >= 94 || m.ramFreeMB < 2_000 || (m.uptimeHours > 168 && m.ramUsedPct >= 82))) return 'restart-soon';
+  if ((disk && m.diskFreeGB < 20) || (memory && m.ramUsedPct >= 88) || (processes && (m.totalProcesses > 850 || m.nodeCount > 140)) || (crashes && m.crashLoopCount >= 10) || (cpu && m.cpuLoadPct >= 95)) return 'maintenance';
+  if ((memory && m.ramUsedPct >= 82) || (processes && (m.totalProcesses > 700 || m.nodeCount > 90 || m.namedAgentCount > 25 || m.codexTaskRuntimeCount > 8 || m.duplicateMcpProcesses > 20 || m.mcpMemoryMB > 4_096)) || (cpu && (m.cpuLoadPct >= 70 || m.cpuSystemLoadPct >= 35))) return 'constrain';
+  if ((memory && m.ramUsedPct >= 72) || m.uptimeHours > 72 || (processes && (m.nodeCount > 60 || m.namedAgentCount > 12 || m.codexTaskRuntimeCount > 4)) || (cpu && m.cpuLoadPct >= 55)) return 'watch';
   return 'green';
 }
 
@@ -88,39 +110,70 @@ function addAction(actions: MaintenanceAction[], action: MaintenanceAction): voi
 }
 
 export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
-  const audit: AuditResult = runAudit({ cwd });
-  const mem = probeMemory();
-  const disk = probeDisk(cwd);
-  const uptime = probeUptime();
-  const procs = probeProcesses();
+  const sampledAt = new Date().toISOString();
+  const execution = runAuditWithProbes({ cwd });
+  return maintenanceFromSnapshot(execution.snapshot, sampledAt, execution.audit);
+}
+
+/** Admission needs live headroom, not repository, GPU or workspace scoring. */
+export function buildAdmissionMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
+  const sampledAt = new Date().toISOString();
+  const snapshot = {
+    mem: probeMemory(),
+    cpu: probeCpu(),
+    disk: probeDisk(cwd),
+    procs: probeProcesses(),
+    uptime: probeUptime(),
+    crashes: probeCrashLoops(),
+  };
+  return maintenanceFromSnapshot(snapshot, sampledAt);
+}
+
+function maintenanceFromSnapshot(
+  snapshot: Pick<AuditProbeSnapshot, 'mem' | 'disk' | 'uptime' | 'procs' | 'cpu' | 'crashes'>,
+  sampledAt: string,
+  audit?: Pick<AuditResult, 'totalScore' | 'grade'>,
+): MaintenancePlan {
+  const { mem, disk, uptime, procs, cpu, crashes } = snapshot;
+  const memoryKnown = Number.isFinite(mem.totalMB) && mem.totalMB > 0 && Number.isFinite(mem.freeMB) && mem.freeMB >= 0 && mem.freeMB <= mem.totalMB && Number.isFinite(mem.usedPct) && mem.usedPct >= 0 && mem.usedPct <= 100;
+  const diskKnown = Number.isFinite(disk.totalGB) && disk.totalGB > 0 && Number.isFinite(disk.freeGB) && disk.freeGB >= 0 && disk.freeGB <= disk.totalGB && Number.isFinite(disk.usedPct) && disk.usedPct >= 0 && disk.usedPct <= 100;
+  const probeEvidence: NonNullable<MaintenancePlan['probeEvidence']> = { sampledAt, memory: memoryKnown ? 'measured' : 'unknown', disk: diskKnown ? 'measured' : 'unknown', cpu: cpu.status ?? 'unknown', processes: procs.status ?? 'unknown', crashes: crashes.status ?? 'unknown' };
+  const unknownProbes = (['memory', 'disk', 'cpu', 'processes', 'crashes'] as const).filter(key => probeEvidence[key] !== 'measured');
   const namedAgentCount = procs.claudeCount + procs.cursorCount + procs.codexCount;
   const aiProcessCount = roleCount(procs, 'ai-agent');
   const localModelCount = roleCount(procs, 'local-model');
-  const mcpCount = roleCount(procs, 'mcp');
+  const mcpCount = procs.mcpCount;
   const devServerCount = roleCount(procs, 'dev-server');
   const buildCount = roleCount(procs, 'build');
   const reviewableCount = procs.processes.filter(proc => !proc.protected).length;
 
   const reasons: string[] = [];
-  if (mem.usedPct >= 88) reasons.push(`RAM is high at ${mem.usedPct}% used (${mem.freeMB}MB free).`);
+  if (unknownProbes.length) reasons.push(`Headroom is unknown for ${unknownProbes.join(', ')}; failed, partial or unsupported probes do not establish clear capacity.`);
+  if (!memoryKnown) reasons.push('RAM capacity is unknown.');
+  else if (mem.usedPct >= 88) reasons.push(`RAM is high at ${mem.usedPct}% used (${mem.freeMB}MB free).`);
   else if (mem.usedPct >= 82) reasons.push(`RAM is elevated at ${mem.usedPct}% used; avoid launching large swarms until pressure drops.`);
   else reasons.push(`RAM is workable at ${mem.usedPct}% used (${mem.freeMB}MB free).`);
 
-  if (disk.freeGB < 20) reasons.push(`Disk is critical at ${disk.freeGB}GB free.`);
+  if (!diskKnown) reasons.push('Disk capacity is unknown.');
+  else if (disk.freeGB < 20) reasons.push(`Disk is critical at ${disk.freeGB}GB free.`);
   else reasons.push(`Disk has ${disk.freeGB}GB free.`);
 
   if (uptime.uptimeHours > 168) reasons.push(`Uptime is ${uptime.uptimeHours}h; schedule a restart after handoff.`);
   else if (uptime.uptimeHours > 72) reasons.push(`Uptime is ${uptime.uptimeHours}h; watch for stale agent/process state.`);
 
   if (namedAgentCount > 25) reasons.push(`${namedAgentCount} named AI-agent processes are active; new swarms should be gated.`);
+  if (procs.codexTaskRuntimeCount > 4) reasons.push(`${procs.codexTaskRuntimeCount} Codex task runtimes are active behind ${procs.codexCount} visible Codex process(es).`);
   if (procs.nodeCount > 90) reasons.push(`${procs.nodeCount} node processes are active; inspect for orphaned build/dev/MCP processes.`);
+  if (procs.mcpCount > 20) reasons.push(`${procs.mcpCount} MCP servers (${procs.mcpProcessCount} tree processes) use ~${procs.mcpMemoryMB}MB; ${procs.duplicateMcpProcesses} are duplicate server-command copies across task runtimes.`);
+  if (cpu.loadPct >= 70 || cpu.systemLoadPct >= 35) reasons.push(`CPU is ${cpu.loadPct}% busy with ${cpu.systemLoadPct}% kernel/interrupt time.`);
+  if (crashes.topAppCrashes > 0) reasons.push(`${crashes.topApp || 'Applications'} recorded ${crashes.topAppCrashes} crashes in ${crashes.windowMinutes} minutes (${crashes.totalCrashes} total recent crashes).`);
   if (localModelCount > 0) reasons.push(`${localModelCount} local model processes are protected; ask before stopping local LLM work.`);
   if (devServerCount > 0) reasons.push(`${devServerCount} dev-server processes should be managed through SDS.`);
   if (buildCount > 0) reasons.push(`${buildCount} build/generator processes are reviewable and require receipts before termination.`);
 
   const metrics = {
-    score: audit.totalScore,
-    grade: audit.grade,
+    score: audit?.totalScore ?? null,
+    grade: audit?.grade ?? 'UNKNOWN',
     ramUsedPct: mem.usedPct,
     ramFreeMB: mem.freeMB,
     diskFreeGB: disk.freeGB,
@@ -128,15 +181,26 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
     totalProcesses: procs.totalProcesses,
     nodeCount: procs.nodeCount,
     namedAgentCount,
+    codexTaskRuntimeCount: procs.codexTaskRuntimeCount,
     aiProcessCount,
     localModelCount,
     mcpCount,
+    mcpProcessCount: procs.mcpProcessCount,
+    mcpMemoryMB: procs.mcpMemoryMB,
+    duplicateMcpProcesses: procs.duplicateMcpProcesses,
+    agentTreeMemoryMB: procs.agentTreeMemoryMB,
     devServerCount,
     buildCount,
     reviewableCount,
+    cpuLoadPct: cpu.loadPct,
+    cpuSystemLoadPct: cpu.systemLoadPct,
+    recentCrashCount: crashes.totalCrashes,
+    crashLoopApp: crashes.topApp,
+    crashLoopCount: crashes.topAppCrashes,
   };
 
-  const posture = choosePosture({ metrics, reasons });
+  const observedPosture = choosePosture({ metrics, reasons, probeEvidence });
+  const posture = unknownProbes.length && ['green', 'watch'].includes(observedPosture) ? 'constrain' : observedPosture;
   const swarmPosture = swarmPostureFor(posture);
   const actions: MaintenanceAction[] = [];
 
@@ -152,7 +216,7 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
     requiresReceipt: false,
   });
 
-  if (mem.usedPct >= 82 || procs.nodeCount > 90 || namedAgentCount > 25) {
+  if (mem.usedPct >= 82 || procs.nodeCount > 90 || namedAgentCount > 25 || procs.codexTaskRuntimeCount > 8 || crashes.topAppCrashes >= 10 || cpu.loadPct >= 70) {
     addAction(actions, {
       id: 'pause-new-swarms',
       priority: 'now',
@@ -165,10 +229,10 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
     });
   }
 
-  if (devServerCount > 0 || procs.nodeCount > 70) {
+  if (devServerCount > 0) {
     addAction(actions, {
       id: 'sds-reap-dev-servers',
-      priority: procs.nodeCount > 90 ? 'now' : 'next',
+      priority: devServerCount > 2 ? 'now' : 'next',
       permission: 'supervisor',
       owner: 'SDS',
       command: 'sds status -IncludeUnmanaged; sds reap',
@@ -176,6 +240,32 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
       expectedImpact: 'Reduces duplicate localhost servers without breaking active review loops.',
       risk: 'low',
       requiresReceipt: false,
+    });
+  }
+
+  if (crashes.topAppCrashes >= 3) {
+    addAction(actions, {
+      id: 'stop-application-crash-loop',
+      priority: crashes.topAppCrashes >= 10 ? 'now' : 'next',
+      permission: 'confirm',
+      owner: 'Human',
+      reason: `${crashes.topApp} is repeatedly crashing (${crashes.topAppCrashes} times/${crashes.windowMinutes}m). Use the owning app/service's reversible disable or repair path; do not kill Windows Error Reporting or Defender.`,
+      expectedImpact: 'Stops repeated crash dumps, restart churn, kernel CPU, and antivirus rescans at the source.',
+      risk: 'medium',
+      requiresReceipt: true,
+    });
+  }
+
+  if (procs.codexTaskRuntimeCount > 4 || procs.duplicateMcpProcesses > 20) {
+    addAction(actions, {
+      id: 'drain-inactive-codex-task-runtimes',
+      priority: procs.codexTaskRuntimeCount > 8 ? 'now' : 'next',
+      permission: 'confirm',
+      owner: 'Human',
+      reason: `${procs.codexTaskRuntimeCount} Codex task runtimes own ${procs.mcpCount} MCP servers (${procs.mcpProcessCount} tree processes). Archive or close inactive Codex tasks so their full process trees exit cleanly; never kill MCP children in isolation.`,
+      expectedImpact: `Can reclaim up to ~${procs.mcpMemoryMB}MB of MCP working set while preserving active task ownership.`,
+      risk: 'medium',
+      requiresReceipt: true,
     });
   }
 
@@ -192,7 +282,7 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
     });
   }
 
-  if (mem.usedPct >= 88 || posture === 'restart-soon') {
+  if ((memoryKnown && mem.usedPct >= 88) || posture === 'restart-soon') {
     addAction(actions, {
       id: 'handoff-before-restart',
       priority: posture === 'restart-soon' ? 'now' : 'next',
@@ -206,7 +296,7 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
     });
   }
 
-  if (disk.freeGB < 50) {
+  if (diskKnown && disk.freeGB < 50) {
     addAction(actions, {
       id: 'safe-cache-cleanup',
       priority: disk.freeGB < 20 ? 'now' : 'next',
@@ -220,9 +310,10 @@ export function buildMaintenancePlan(cwd = process.cwd()): MaintenancePlan {
     });
   }
 
-  const summary = `${posture} maintenance posture; ${swarmPosture} swarm posture; score ${audit.totalScore}/${audit.grade}.`;
+  const summary = `${posture} maintenance posture; ${swarmPosture} swarm posture; ${audit ? `score ${audit.totalScore ?? 'Unknown'}/${audit.grade}` : 'Ten Gate score not collected'}.`;
 
   return {
+    probeEvidence,
     timestamp: new Date().toISOString(),
     hostname: os.hostname(),
     posture,
