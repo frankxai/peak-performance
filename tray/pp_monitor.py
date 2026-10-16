@@ -135,7 +135,7 @@ def probe_processes() -> dict:
                 info['codexCount'] += 1
             if name == 'code.exe':
                 info['vscodeCount'] += 1
-            if 'msedge' in name or 'chrome' in name:
+            if name in {'chrome', 'chrome.exe', 'msedge', 'msedge.exe', 'brave', 'brave.exe', 'comet', 'comet.exe'}:
                 info['edgeChromeTabs'] += 1
     except Exception:
         pass
