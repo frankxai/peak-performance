@@ -232,7 +232,7 @@ const PROCESS_MATCHERS: Record<string, (name: string) => boolean> = {
   cursor: (n) => n === 'cursor.exe' || n === 'cursor',
   codex: (n) => n === 'codex.exe' || n === 'codex',
   vscode: (n) => n === 'code.exe' || n === 'code',
-  browser: (n) => n === 'msedge.exe' || n === 'chrome.exe' || n === 'msedge' || n === 'chrome',
+  browser: (n) => /^(chrome|msedge|brave|comet)(\.exe)?$/.test(n),
 };
 
 const WINDOWS_PROTECTED_NAMES = new Set([
@@ -298,6 +298,9 @@ function redactCommandLine(command: string): string {
 function classifyProcess(name: string, command: string): Pick<ProcessConsumer, 'role' | 'protected' | 'protectionReason'> {
   const n = name.toLowerCase();
   const cmd = command.toLowerCase();
+  if (PROCESS_MATCHERS.browser(n)) {
+    return { role: 'browser', protected: true, protectionReason: 'browser sessions are protected from resource cleanup' };
+  }
   const looksLikeMcpServer =
     cmd.includes('modelcontextprotocol') ||
     /(^|[\s"'\\/])(mcp|mcp-server|mcpserver)([\s"'\\/]|$)/.test(cmd) ||
@@ -321,9 +324,6 @@ function classifyProcess(name: string, command: string): Pick<ProcessConsumer, '
   }
   if (PROCESS_MATCHERS.vscode(n)) {
     return { role: 'editor', protected: true, protectionReason: 'editor workspace' };
-  }
-  if (PROCESS_MATCHERS.browser(n)) {
-    return { role: 'browser', protected: false };
   }
   if (cmd.includes('hermes_cli.main gateway run') || cmd.includes('hermes-cli') || cmd.includes('hermes gateway')) {
     return { role: 'mcp', protected: true, protectionReason: 'Hermes/Starlight orchestration gateway' };
@@ -386,6 +386,7 @@ function processReasoning(classification: Pick<ProcessConsumer, 'role' | 'protec
 }
 
 function processActionHint(classification: Pick<ProcessConsumer, 'role' | 'protected'>): string {
+  if (classification.role === 'browser') return 'Leave personal browsers open; use the browser supervisor only for an exactly owned agent session.';
   if (classification.protected) return 'Do not terminate without explicit coordination or a supervisor-specific stop path.';
 
   switch (classification.role) {
@@ -393,8 +394,6 @@ function processActionHint(classification: Pick<ProcessConsumer, 'role' | 'prote
       return 'Can be reduced only after recording a receipt and confirming regeneration/resume command.';
     case 'node':
       return 'Candidate for reduction only if orphaned, duplicate, idle, or owned by a stopped task.';
-    case 'browser':
-      return 'Reduce by closing tabs/windows manually when user confirms.';
     case 'shell':
       return 'Reduce by stopping the child job or closing the owning terminal after confirmation.';
     default:
