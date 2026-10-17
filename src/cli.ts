@@ -227,9 +227,8 @@ switch (command) {
   case 'prep': {
     console.log('\n  Running Agent State Preservation & Handover (ASPH) Prep...\n');
     const result = runPrepHandover(process.cwd());
-    console.log('  ✅ Repository checkpoints completed.');
-    console.log('  ✅ Claude sessions analyzed.');
-    console.log('  ✅ Handover prompt templates optimized.');
+    console.log('  Dirty repos were listed and left uncommitted.');
+    console.log('  Grok resume lines are in the handover.');
     console.log(`  Saved Plaintext Log: ${result.txtFile}`);
     console.log(`  Saved Interactive Dashboard: ${result.htmlFile}\n`);
     break;
