@@ -120,3 +120,13 @@ test('prep handover records porcelain and grok resume lines without committing',
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('prep command does not claim it wrote checkpoints', () => {
+  const cli = readFileSync(join(process.cwd(), 'src', 'cli.ts'), 'utf8');
+  const prep = cli.slice(cli.indexOf("case 'prep'"), cli.indexOf('default:'));
+  assert.match(prep, /Dirty repos were listed and left uncommitted/);
+  assert.match(prep, /Grok resume lines are in the handover/);
+  assert.equal(prep.includes('Repository checkpoints completed'), false);
+  assert.equal(prep.includes('Claude sessions analyzed'), false);
+  assert.equal(prep.includes('Handover prompt templates optimized'), false);
+});
