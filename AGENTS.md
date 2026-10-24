@@ -6,7 +6,7 @@ This repo is part of the FrankX / Starlight / Arcanea agent estate.
 
 - Repo: `peak-performance`
 - Class: published npm CLI + Python system tray + MCP server (`@arcanea/peak-performance` / `@arcanea/pp`) — system health auditor for AI-powered development machines
-- Default health command: `npm test` (`tsx --test src/**/*.test.ts`) and `npm run lint` (`tsc --noEmit`)
+- Default health command: `npm test` (`node --test src/**/*.test.ts`) and `npm run lint` (`tsc --noEmit`)
 - Remote: https://github.com/frankxai/peak-performance
 
 ## What this repo is
