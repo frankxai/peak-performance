@@ -26,6 +26,7 @@ interface RepoAudit {
   uncommittedCount: number;
   // Legacy in-tree evidence is never checkpointed; it stays on disk and the report says so.
   asphWipLeftOnDisk: boolean;
+  needsCheckpoint: boolean;
   uncommittedList: string[];
   lastCommit: string;
   checkpointCreated: boolean;
@@ -170,7 +171,8 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
     let checkpointMode: RepoAudit['checkpointMode'] = 'none';
     let resumeCommand = '';
     let checkpointSha: string | undefined;
-    if (uncommittedCount > 0) {
+    const needsCheckpoint = uncommittedList.some(l => !l.includes('.asph-wip'));
+    if (needsCheckpoint) {
       const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0,19);
       // Evidence lives OUTSIDE the tree. A patch written into <repo>/.asph-wip/ was swept up by the
       // next checkpoint's `git add -A`, grew to 216 MB blobs, and made the repo unpushable (GH001).
@@ -229,6 +231,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
       branch,
       uncommittedCount,
       asphWipLeftOnDisk: uncommittedList.some(l => l.includes('.asph-wip')),
+      needsCheckpoint,
       uncommittedList,
       lastCommit,
       checkpointCreated,
@@ -443,7 +446,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
   repoAudits.forEach(repo => {
     const isDirty = repo.uncommittedCount > 0;
     const cleanLabel = isDirty ? 'dirty' : 'clean';
-    const statusText = !isDirty ? 'Clean' : repo.checkpointCreated ? `${repo.uncommittedCount} Files Saved${repo.asphWipLeftOnDisk ? ' (.asph-wip/ left on disk)' : ''}` :`${repo.uncommittedCount} Files NOT SAVED`;
+    const statusText = !isDirty ? 'Clean' : !repo.needsCheckpoint ? 'Only .asph-wip/ (left on disk)' : repo.checkpointCreated ? `${repo.uncommittedCount} Files Saved${repo.asphWipLeftOnDisk ? ' (.asph-wip/ left on disk)' : ''}` :`${repo.uncommittedCount} Files NOT SAVED`;
     
     htmlContent += `
             <div class="card ${cleanLabel}">
@@ -495,7 +498,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
 
   writeFileSync(htmlFile, htmlContent, 'utf8');
 
-  const unsaved = repoAudits.filter(r => r.uncommittedCount > 0 && !r.checkpointCreated).map(r => r.name);
+  const unsaved = repoAudits.filter(r => r.needsCheckpoint && !r.checkpointCreated).map(r => r.name);
   return {
     success: unsaved.length === 0,
     unsaved,
