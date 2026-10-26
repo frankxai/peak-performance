@@ -49,6 +49,12 @@ export function findStashSha(list: string, tag: string): string {
   return line ? line.split('\t')[0] : '';
 }
 
+// A `git status --porcelain` line whose path is the top-level .asph-wip/ evidence folder. The status
+// code may have lost its leading space to trimming, so match the path after it, not a fixed column.
+export function isAsphWipLine(line: string): boolean {
+  return /^\s*\S{1,2}\s+"?\.asph-wip(\/|"?$)/.test(line);
+}
+
 // Prompts, commit subjects and branch names are untrusted text; the report is opened in a browser.
 export function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -171,7 +177,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
     let checkpointMode: RepoAudit['checkpointMode'] = 'none';
     let resumeCommand = '';
     let checkpointSha: string | undefined;
-    const needsCheckpoint = uncommittedList.some(l => !l.includes('.asph-wip'));
+    const needsCheckpoint = uncommittedList.some(l => !isAsphWipLine(l));
     if (needsCheckpoint) {
       const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0,19);
       // Evidence lives OUTSIDE the tree. A patch written into <repo>/.asph-wip/ was swept up by the
@@ -208,7 +214,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
         if (commitOut) {
           // .asph-wip/ is excluded on purpose (legacy in-tree evidence, the origin of the 216 MB blobs)
           // and stays on disk; anything else still dirty means the checkpoint is partial.
-          const leftOver = runCmd('git status --porcelain', repoPath).split('\n').filter(l => l.trim() && !l.includes('.asph-wip'));
+          const leftOver = runCmd('git status --porcelain', repoPath).split('\n').filter(l => l.trim() && !isAsphWipLine(l));
           checkpointCreated = leftOver.length === 0;
           checkpointMode = 'commit';
           resumeCommand = 'git reset HEAD~1 --mixed';
@@ -230,7 +236,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
       path: repoPath,
       branch,
       uncommittedCount,
-      asphWipLeftOnDisk: uncommittedList.some(l => l.includes('.asph-wip')),
+      asphWipLeftOnDisk: uncommittedList.some(isAsphWipLine),
       needsCheckpoint,
       uncommittedList,
       lastCommit,
