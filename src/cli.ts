@@ -236,7 +236,12 @@ switch (command) {
     }
     console.log('\n  Running Agent State Preservation & Handover (ASPH) Prep...\n');
     const result = runPrepHandover(process.cwd());
-    console.log('  ✅ Repository checkpoints completed.');
+    if (result.success) {
+      console.log('  ✅ Repository checkpoints completed.');
+    } else {
+      console.log(`  ❌ Not saved (dirty, checkpoint failed): ${result.unsaved.join(', ')}`);
+      process.exitCode = 1;
+    }
     console.log('  ✅ Claude sessions analyzed.');
     console.log('  ✅ Handover prompt templates optimized.');
     console.log(`  Saved Plaintext Log: ${result.txtFile}`);

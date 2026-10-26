@@ -9,6 +9,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import os from 'node:os';
+import { randomBytes } from 'node:crypto';
 
 interface SessionData {
   sessionId: string;
@@ -31,9 +32,21 @@ interface RepoAudit {
   activeSession?: SessionData;
 }
 
-// A WIP commit on a shared branch is one push from a production deploy, so those branches get a
-// stash instead. Measured 2026-09-19: 106 repos carried an ASPH commit at HEAD, 15 of them on main.
-const PROTECTED_BRANCHES = new Set(['main', 'master', 'unknown', '']);
+// A WIP commit on a shared branch is one push from a production deploy, so only agent branches get a
+// commit; everything else (main, master, detached HEAD, release or human branches) gets a stash.
+// Measured 2026-09-19: 106 repos carried an ASPH commit at HEAD, 15 of them on main.
+const AGENT_BRANCH = /^(agent\/[A-Za-z0-9._-]+\/|codex\/)/;
+
+// `git stash list --format=%H%x09%gs` output; the tag is unique per checkpoint, so another
+// worktree pushing a stash at the same moment cannot be mistaken for this one.
+export function findStashSha(list: string, tag: string): string {
+  const line = list.split('\n').find(l => l.endsWith(`: ${tag}`));
+  return line ? line.split('\t')[0] : '';
+}
+
+export function checkpointModeFor(branch: string): 'commit' | 'stash' {
+  return AGENT_BRANCH.test(branch) ? 'commit' : 'stash';
+}
 
 function runCmd(cmd: string, cwd: string): string {
   try {
@@ -55,7 +68,7 @@ function getDesktopPath(): string {
   return home;
 }
 
-export function runPrepHandover(cwd: string): { success: boolean; desktopDir: string; txtFile: string; htmlFile: string } {
+export function runPrepHandover(cwd: string): { success: boolean; unsaved: string[]; desktopDir: string; txtFile: string; htmlFile: string } {
   const reposRoot = 'C:\\Users\\frank\\starlight\\repos';
   const historyPath = 'C:\\Users\\frank\\.claude\\history.jsonl';
   
@@ -159,14 +172,18 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
 
       const objective = matchedSession ? matchedSession.lastPrompt.replace(/\n/g, ' ').slice(0, 300) : 'N/A';
       const stashCheckpoint = (): boolean => {
-        const out = runCmd(`git stash push --include-untracked -m "asph ${ts}: ${objective.slice(0, 80)}"`, repoPath);
+        // Fixed message: session text never reaches the shell. The stash list is shared by every
+        // worktree of a repo, so the resume command names this entry by SHA instead of popping the top.
+        const tag = `asph-${ts}-${randomBytes(4).toString('hex')}`;
+        const out = runCmd(`git stash push --include-untracked -m "${tag}"`, repoPath);
         if (!/Saved working directory/.test(out)) return false;
+        const sha = findStashSha(runCmd('git stash list --format=%H%x09%gs', repoPath), tag);
         checkpointMode = 'stash';
-        resumeCommand = 'git stash pop';
+        resumeCommand = sha ? `git stash apply ${sha}` : `git stash list (entry ${tag})`;
         return true;
       };
 
-      if (PROTECTED_BRANCHES.has(branch)) {
+      if (checkpointModeFor(branch) === 'stash') {
         checkpointCreated = stashCheckpoint();
       } else {
         runCmd('git add -A', repoPath);
@@ -215,7 +232,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
   txtContent += `RECOVERY ACTIONS:\n`;
   txtContent += `1. Reboot machine to clean RAM and close active processes.\n`;
   txtContent += `2. Open terminal in each repo directory.\n`;
-  txtContent += `3. In each dirty repo run the resume command listed below ('git stash pop' on main, 'git reset HEAD~1' on agent branches).\n`;
+  txtContent += `3. In each dirty repo run the resume command listed below ('git stash apply <sha>' for stashes, 'git reset HEAD~1' on agent branches).\n`;
   txtContent += `4. Start agents using resume commands and prompts below.\n\n`;
   txtContent += `======================================================================\n\n`;
 
@@ -396,7 +413,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
         <div class="actions-card">
             <h2>⚡ Quick-Recovery Runbook</h2>
             <ul class="actions-list">
-                <li>Run the resume command shown per repo (<code>git stash pop</code> on main, <code>git reset HEAD~1</code> on agent branches).</li>
+                <li>Run the resume command shown per repo (<code>git stash apply &lt;sha&gt;</code> for stashes, <code>git reset HEAD~1</code> on agent branches).</li>
                 <li>Launch the agent in the directory using the recovery commands below.</li>
                 <li>Copy the optimized continuation prompt and paste it to resume the session with complete state.</li>
             </ul>
@@ -407,7 +424,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
   repoAudits.forEach(repo => {
     const isDirty = repo.uncommittedCount > 0;
     const cleanLabel = isDirty ? 'dirty' : 'clean';
-    const statusText = isDirty ? `${repo.uncommittedCount} Files Saved` : 'Clean';
+    const statusText = !isDirty ? 'Clean' : repo.checkpointCreated ? `${repo.uncommittedCount} Files Saved` : `${repo.uncommittedCount} Files NOT SAVED`;
     
     htmlContent += `
             <div class="card ${cleanLabel}">
@@ -459,8 +476,10 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
 
   writeFileSync(htmlFile, htmlContent, 'utf8');
 
+  const unsaved = repoAudits.filter(r => r.uncommittedCount > 0 && !r.checkpointCreated).map(r => r.name);
   return {
-    success: true,
+    success: unsaved.length === 0,
+    unsaved,
     desktopDir,
     txtFile,
     htmlFile
