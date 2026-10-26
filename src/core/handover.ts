@@ -46,6 +46,11 @@ export function findStashSha(list: string, tag: string): string {
   return line ? line.split('\t')[0] : '';
 }
 
+// Prompts, commit subjects and branch names are untrusted text; the report is opened in a browser.
+export function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 export function checkpointModeFor(branch: string): 'commit' | 'stash' {
   return AGENT_BRANCH.test(branch) ? 'commit' : 'stash';
 }
@@ -204,6 +209,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
           checkpointMode = 'commit';
           resumeCommand = 'git reset HEAD~1 --mixed';
           checkpointSha = runCmd('git rev-parse HEAD', repoPath) || undefined;
+          if (!checkpointSha) checkpointCreated = false;
           runCmd(`git tag asph-wip-${ts}`, repoPath);
           const noteFile = join(evidenceDir, `note-${ts}.txt`);
           const noteContent = `ASPH WIP\nBranch: ${branch}\nObjective: ${objective}\nTouched: ${uncommittedList.slice(0,10).join(' ')}\nResume with: ${resumeCommand} (only while HEAD is ${checkpointSha ?? 'the checkpoint commit'})\nPatch: ${join(evidenceDir, `asph-${ts}.patch`)}`;
@@ -439,12 +445,12 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
     htmlContent += `
             <div class="card ${cleanLabel}">
                 <div class="card-header">
-                    <span class="repo-name">${repo.name}</span>
-                    <span class="status-badge ${cleanLabel}">${statusText}</span>${repo.checkpointCreated ? `<code>${repo.resumeCommand}${repo.checkpointSha ? ` (only while HEAD is ${repo.checkpointSha})` : ''}</code>` : ''}
+                    <span class="repo-name">${escapeHtml(repo.name)}</span>
+                    <span class="status-badge ${cleanLabel}">${statusText}</span>${repo.checkpointCreated ? `<code>${escapeHtml(repo.resumeCommand)}${repo.checkpointSha ? ` (only while HEAD is ${escapeHtml(repo.checkpointSha)})` : ''}</code>` : ''}
                 </div>
                 <div class="meta-row">
-                    <div>Branch: <strong>${repo.branch}</strong></div>
-                    <div>Last commit: <code>${repo.lastCommit.slice(0, 50)}...</code></div>
+                    <div>Branch: <strong>${escapeHtml(repo.branch)}</strong></div>
+                    <div>Last commit: <code>${escapeHtml(repo.lastCommit.slice(0, 50))}...</code></div>
                 </div>`;
 
     if (repo.activeSession) {
@@ -453,21 +459,21 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
                             repo.name === 'arcanea-ecosystem' ? 'clarc' :
                             repo.name === 'agentic-creator-os' ? 'clacos' : `cl ${repo.name}`;
       
-      const optPrompt = `/goal [FEYNMAN ROUTE] Resume task on branch ${repo.branch}. \\nObjective: Continue working on: "${repo.activeSession.lastPrompt.replace(/"/g, '&quot;').replace(/\n/g, ' ')}".\\nContext: ${repo.checkpointSha ? `Confirm HEAD is ${repo.checkpointSha}, then run` : 'First run'} '${repo.resumeCommand || 'git status'}' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
+      const optPrompt = `/goal [FEYNMAN ROUTE] Resume task on branch ${repo.branch}. \\nObjective: Continue working on: "${repo.activeSession.lastPrompt.replace(/\n/g, ' ')}".\\nContext: ${repo.checkpointSha ? `Confirm HEAD is ${repo.checkpointSha}, then run` : 'First run'} '${repo.resumeCommand || 'git status'}' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
       
       htmlContent += `
                 <div class="prompt-box">
                     <strong>Continuation Prompt</strong>
                     <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; margin-top: 5px;">
-                        ${optPrompt.replace(/\\n/g, '<br/>')}
+                        ${escapeHtml(optPrompt).replace(/\\n/g, '<br/>')}
                     </div>
                 </div>
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <div class="code-box" style="margin: 0; flex-grow: 1;">
-                        ${shortShortcut}
+                        ${escapeHtml(shortShortcut)}
                     </div>
-                    <button class="btn" onclick="navigator.clipboard.writeText('${shortShortcut}')">Copy Command</button>
-                    <button class="btn" onclick="navigator.clipboard.writeText('${optPrompt.replace(/'/g, "\\'")}')">Copy Prompt</button>
+                    <button class="btn" onclick="navigator.clipboard.writeText(${escapeHtml(JSON.stringify(shortShortcut))})">Copy Command</button>
+                    <button class="btn" onclick="navigator.clipboard.writeText(${escapeHtml(JSON.stringify(optPrompt.replace(/\\n/g, '\n')))})">Copy Prompt</button>
                 </div>`;
     } else {
       htmlContent += `

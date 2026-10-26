@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { checkpointModeFor, findStashSha } from './handover.js';
+import { checkpointModeFor, escapeHtml, findStashSha } from './handover.js';
 
 test('agent and codex branches get a commit checkpoint', () => {
   for (const b of ['agent/claude/asph-main-guard', 'agent/antigravity/x-20261026', 'codex/rova']) {
@@ -22,4 +22,8 @@ test('findStashSha picks the entry with this checkpoint tag, not the newest one'
   ].join('\n');
   assert.equal(findStashSha(list, 'asph-2026-10-26T12-00-00-1234abcd'), 'bbb222');
   assert.equal(findStashSha(list, 'asph-2026-10-26T12-00-00-00000000'), '');
+});
+
+test('escapeHtml neutralises markup from prompts and commit subjects', () => {
+  assert.equal(escapeHtml(`<img src=x onerror="alert('x')">&`), '&lt;img src=x onerror=&quot;alert(&#39;x&#39;)&quot;&gt;&amp;');
 });
