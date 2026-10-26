@@ -2,8 +2,9 @@
  * Agent State Preservation & Handover (ASPH) Protocol
  * core/handover.ts
  *
- * Scans, checkpoints, and generates continuation prompts for active agents.
- * Exports summaries to the User's Desktop as HTML & TXT.
+ * Reads repo porcelain and live harness sessions, then writes a desktop handover.
+ * Does not commit, tag, or note. A prep pass that commits would publish other
+ * agents' dirty trees and skip hooks.
  */
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
@@ -25,13 +26,42 @@ interface RepoAudit {
   uncommittedCount: number;
   uncommittedList: string[];
   lastCommit: string;
-  checkpointCreated: boolean;
   activeSession?: SessionData;
 }
 
-function runCmd(cmd: string, cwd: string): string {
+interface GrokResumeLine {
+  id: string;
+  title: string;
+  lastTurn: string;
+}
+
+export interface PrepHandoverOptions {
+  reposRoot?: string;
+  desktopDir?: string;
+  historyFiles?: readonly string[];
+  grokActiveSessionsPath?: string;
+  grokSessionsRoot?: string;
+  exec?: (cmd: string, cwd: string) => string;
+}
+
+const DEFAULT_REPOS_ROOT = 'C:\\Users\\frank\\starlight\\repos';
+const DEFAULT_GROK_ACTIVE = 'C:\\Users\\frank\\.grok\\active_sessions.json';
+const DEFAULT_GROK_SESSIONS = 'C:\\Users\\frank\\.grok\\sessions';
+const DEFAULT_HISTORY_FILES = [
+  'C:\\Users\\frank\\.claude\\history.jsonl',
+  'C:\\Users\\frank\\.gemini\\antigravity-cli\\history.jsonl',
+  'C:\\Users\\frank\\.codex\\history.jsonl',
+];
+
+function defaultExec(cmd: string, cwd: string): string {
+  return execSync(cmd, { encoding: 'utf-8', cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+}
+
+function runCmd(cmd: string, cwd: string, exec: (cmd: string, cwd: string) => string): string {
   try {
-    return execSync(cmd, { encoding: 'utf-8', cwd, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    // Trailing newline only. A leading trim would erase porcelain's first column,
+    // so an unstaged change (` M file`) would look staged (`M file`).
+    return exec(cmd, cwd).replace(/\s+$/u, '');
   } catch {
     return '';
   }
@@ -49,11 +79,118 @@ function getDesktopPath(): string {
   return home;
 }
 
-export function runPrepHandover(cwd: string): { success: boolean; desktopDir: string; txtFile: string; htmlFile: string } {
-  const reposRoot = 'C:\\Users\\frank\\starlight\\repos';
-  const historyPath = 'C:\\Users\\frank\\.claude\\history.jsonl';
-  
-  // 1. Gather all repositories inside the repos root
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function loadGrokResumeLines(activePath: string, sessionsRoot: string): GrokResumeLine[] {
+  if (!existsSync(activePath) || !existsSync(sessionsRoot)) return [];
+  let active: unknown;
+  try {
+    active = JSON.parse(readFileSync(activePath, 'utf8'));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(active)) return [];
+
+  const wanted: string[] = [];
+  for (const entry of active) {
+    if (!entry || typeof entry !== 'object') continue;
+    const id = (entry as { session_id?: unknown }).session_id;
+    if (typeof id === 'string' && id && !wanted.includes(id)) wanted.push(id);
+  }
+  if (wanted.length === 0) return [];
+  const wantedSet = new Set(wanted);
+
+  const summaryPathById = new Map<string, string>();
+  let cwdEntries;
+  try {
+    cwdEntries = readdirSync(sessionsRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  for (const cwdEntry of cwdEntries) {
+    if (!cwdEntry.isDirectory()) continue;
+    const cwdPath = join(sessionsRoot, cwdEntry.name);
+    let sessionEntries;
+    try {
+      sessionEntries = readdirSync(cwdPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const sessionEntry of sessionEntries) {
+      if (!sessionEntry.isDirectory()) continue;
+      if (!wantedSet.has(sessionEntry.name) || summaryPathById.has(sessionEntry.name)) continue;
+      const summaryPath = join(cwdPath, sessionEntry.name, 'summary.json');
+      if (existsSync(summaryPath)) summaryPathById.set(sessionEntry.name, summaryPath);
+    }
+  }
+
+  const lines: GrokResumeLine[] = [];
+  for (const id of wanted) {
+    const summaryPath = summaryPathById.get(id);
+    if (!summaryPath) continue;
+    let summary: unknown;
+    try {
+      summary = JSON.parse(readFileSync(summaryPath, 'utf8'));
+    } catch {
+      continue;
+    }
+    if (!summary || typeof summary !== 'object' || Array.isArray(summary)) continue;
+    const record = summary as { session_kind?: unknown; generated_title?: unknown; last_turn_summary?: unknown };
+    if (record.session_kind === 'subagent' || record.session_kind === 'subagent_fork') continue;
+    lines.push({
+      id,
+      title: typeof record.generated_title === 'string' ? record.generated_title : '',
+      lastTurn: typeof record.last_turn_summary === 'string' ? record.last_turn_summary : '',
+    });
+  }
+  return lines;
+}
+
+function renderGrokText(lines: GrokResumeLine[]): string {
+  if (lines.length === 0) return '';
+  let out = `GROK RESUME LINES:\n`;
+  for (const line of lines) {
+    out += `- grok --resume ${line.id}\n`;
+    out += `  Title: ${line.title}\n`;
+    out += `  Last turn: ${line.lastTurn}\n`;
+  }
+  out += `\n`;
+  return out;
+}
+
+function renderGrokHtml(lines: GrokResumeLine[]): string {
+  if (lines.length === 0) return '';
+  let out = `
+        <div class="actions-card">
+            <h2>Live Grok sessions</h2>
+            <ul class="actions-list">`;
+  for (const line of lines) {
+    out += `
+                <li><code>grok --resume ${escapeHtml(line.id)}</code><br/>${escapeHtml(line.title)}<br/>${escapeHtml(line.lastTurn)}</li>`;
+  }
+  out += `
+            </ul>
+        </div>`;
+  return out;
+}
+
+export function runPrepHandover(
+  cwd: string,
+  options: PrepHandoverOptions = {},
+): { success: boolean; desktopDir: string; txtFile: string; htmlFile: string } {
+  void cwd;
+  const reposRoot = options.reposRoot ?? DEFAULT_REPOS_ROOT;
+  const historyFiles = options.historyFiles ?? DEFAULT_HISTORY_FILES;
+  const grokActiveSessionsPath = options.grokActiveSessionsPath ?? DEFAULT_GROK_ACTIVE;
+  const grokSessionsRoot = options.grokSessionsRoot ?? DEFAULT_GROK_SESSIONS;
+  const exec = options.exec ?? defaultExec;
+
   const repoDirs: string[] = [];
   if (existsSync(reposRoot)) {
     const entries = readdirSync(reposRoot, { withFileTypes: true });
@@ -64,14 +201,8 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
     }
   }
 
-  // 2. Parse active sessions from Claude + other harness histories (agy/antigravity, codex)
   // Merge by sessionId (or workspace for non-claude), keep the most recent lastPrompt.
   const sessions: Record<string, SessionData> = {};
-  const historyFiles = [
-    historyPath,
-    'C:\\Users\\frank\\.gemini\\antigravity-cli\\history.jsonl',
-    'C:\\Users\\frank\\.codex\\history.jsonl'
-  ];
   for (const hPath of historyFiles) {
     if (!existsSync(hPath)) continue;
     const lines = readFileSync(hPath, 'utf8').split('\n').filter(l => l.trim());
@@ -84,7 +215,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
         const display = entry.display || entry.text || '';
         const timestamp = entry.timestamp || entry.ts || 0;
         if (!sessionId) continue;
-        
+
         if (!sessions[sessionId]) {
           sessions[sessionId] = {
             sessionId,
@@ -94,7 +225,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
             promptCount: 0
           };
         }
-        
+
         if (display && display.trim()) {
           // Prefer longer/more recent prompt
           if (timestamp >= sessions[sessionId].lastTimestamp || display.length > sessions[sessionId].lastPrompt.length) {
@@ -115,51 +246,24 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
     }
   }
 
-  // 3. Audit each Git repo and run WIP checkpoints
   const repoAudits: RepoAudit[] = [];
-  
+
   for (const name of repoDirs) {
     const repoPath = join(reposRoot, name);
-    const branch = runCmd('git branch --show-current', repoPath) || 'unknown';
-    const lastCommit = runCmd('git log -1 --oneline', repoPath) || 'no commits';
-    
-    // Check for dirty files
-    const status = runCmd('git status --porcelain', repoPath);
+    const branch = runCmd('git branch --show-current', repoPath, exec) || 'unknown';
+    const lastCommit = runCmd('git log -1 --oneline', repoPath, exec) || 'no commits';
+
+    // Read-only. Dirty trees stay dirty: no add, commit, tag, or git note.
+    const status = runCmd('git status --porcelain', repoPath, exec);
     const uncommittedList = status.split('\n').filter(l => l.trim());
     const uncommittedCount = uncommittedList.length;
-    
-    // Match this repo path to the most recent active session
+
     let matchedSession: SessionData | undefined;
     for (const s of Object.values(sessions)) {
       if (s.project && s.project.toLowerCase() === repoPath.toLowerCase()) {
         if (!matchedSession || s.lastTimestamp > matchedSession.lastTimestamp) {
           matchedSession = s;
         }
-      }
-    }
-
-    let checkpointCreated = false;
-    let wipTag = '';
-    if (uncommittedCount > 0) {
-      // Create WIP commit to stash changes safely
-      runCmd('git add -A', repoPath);
-      const commitOut = runCmd('git commit -m "wip: pre-reboot checkpoint (ASPH)" --no-verify', repoPath);
-      if (commitOut) {
-        checkpointCreated = true;
-        // Genius safety: tag + note the objective + touched for traceability (smarter than plain commit)
-        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0,19);
-        wipTag = `asph-wip-${ts}`;
-        runCmd(`git tag ${wipTag}`, repoPath);
-        // Safer note via temp file (avoids quoting hell with newlines/special chars in objective)
-        const noteContent = `ASPH WIP\nBranch: ${branch}\nObjective: ${(matchedSession ? matchedSession.lastPrompt.replace(/\n/g, ' ').slice(0,300) : 'N/A')}\nTouched: ${uncommittedList.slice(0,10).join(' ')}\nResume with: git reset HEAD~1 --mixed\nFull prompt + visual console in agentic-ops/lifecycle/asph-genius-recovery.html`;
-        const noteFile = join(repoPath, '.asph-wip', `note-${ts}.txt`);
-        try { require('fs').writeFileSync(noteFile, noteContent); runCmd(`git notes add -f -F "${noteFile}"`, repoPath); } catch(e){ /* non-fatal */ }
-        // Export patch for extra safety / visual diff later
-        const patchDir = join(repoPath, '.asph-wip');
-        if (!existsSync(patchDir)) {
-          runCmd(`mkdir -p "${patchDir}"`, repoPath); // cross platform-ish
-        }
-        runCmd(`git diff HEAD~1 > "${patchDir}/asph-${ts}.patch"`, repoPath);
       }
     }
 
@@ -170,58 +274,60 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
       uncommittedCount,
       uncommittedList,
       lastCommit,
-      checkpointCreated,
       activeSession: matchedSession
     });
   }
 
-  // 4. Generate continuation prompts with prompt-hub optimization patterns
-  const desktopDir = getDesktopPath();
+  const grokLines = loadGrokResumeLines(grokActiveSessionsPath, grokSessionsRoot);
+  const desktopDir = options.desktopDir ?? getDesktopPath();
   const txtFile = join(desktopDir, 'handover-reboot.txt');
   const htmlFile = join(desktopDir, 'handover-reboot.html');
 
-  // Build TXT file content
   let txtContent = `STARLIGHT INTEL SYSTEM — ASPH HANDOVER REPORT\n`;
   txtContent += `Generated: ${new Date().toLocaleString()}\n`;
   txtContent += `======================================================================\n\n`;
   txtContent += `RECOVERY ACTIONS:\n`;
   txtContent += `1. Reboot machine to clean RAM and close active processes.\n`;
-  txtContent += `2. Open terminal in each repo directory.\n`;
-  txtContent += `3. Run 'git reset HEAD~1' in dirty directories to restore working tree.\n`;
-  txtContent += `4. Start agents using resume commands and prompts below.\n\n`;
+  txtContent += `2. Open a terminal in each repo directory you intend to resume.\n`;
+  txtContent += `3. Dirty repos were left uncommitted. Read the porcelain list. Do not reset HEAD and do not commit from this handover.\n`;
+  txtContent += `4. Resume Grok sessions with the grok --resume lines below, then continue the listed prompts.\n\n`;
+  txtContent += renderGrokText(grokLines);
   txtContent += `======================================================================\n\n`;
 
   repoAudits.forEach(repo => {
     txtContent += `REPOSITORY: ${repo.name}\n`;
     txtContent += `- Path: ${repo.path}\n`;
     txtContent += `- Branch: ${repo.branch}\n`;
-    txtContent += `- Uncommitted Files: ${repo.uncommittedCount} (${repo.checkpointCreated ? 'Saved to WIP commit' : 'None'})\n`;
+    txtContent += `- Uncommitted files: ${repo.uncommittedCount}`;
+    txtContent += repo.uncommittedCount > 0 ? ` (left uncommitted; not committed, tagged, or noted)\n` : `\n`;
+    if (repo.uncommittedList.length > 0) {
+      txtContent += `- Porcelain:\n`;
+      for (const line of repo.uncommittedList) {
+        txtContent += `  ${line}\n`;
+      }
+    }
     txtContent += `- Last Commit: ${repo.lastCommit}\n`;
-    
+
     if (repo.activeSession) {
       txtContent += `- Session ID: ${repo.activeSession.sessionId}\n`;
       txtContent += `- Last Prompt: ${repo.activeSession.lastPrompt.slice(0, 100)}...\n`;
-      // Touched files since the WIP (best effort)
-      const touched = runCmd('git diff --name-only HEAD~1 2>$null || git status --porcelain', repo.path).split('\n').filter(Boolean).slice(0, 8).join(', ');
-      if (touched) txtContent += `- Touched (approx): ${touched}\n`;
       txtContent += `- Continuation prompt:\n`;
       txtContent += `------------------------------------------------------------\n`;
       txtContent += `/goal [FEYNMAN ROUTE] Resume task on branch ${repo.branch}.\n`;
       txtContent += `Objective: Continue working on: "${repo.activeSession.lastPrompt.replace(/\n/g, ' ')}".\n`;
-      let ctx = `Context: First run 'git reset HEAD~1' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
-      if (touched) ctx += ` Touched files: ${touched}.`;
-      // Worktree / global protocol note for best thinkers pattern
+      let ctx = `Context: Uncommitted files were left in the working tree. Verify git status before editing. Do not commit, tag, or reset as part of resuming. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
+      if (repo.uncommittedList.length) ctx += ` Porcelain: ${repo.uncommittedList.join(' | ')}.`;
       if (!/agent\//.test(repo.branch)) {
         ctx += ` (Note: active branch is not agent/* — consider worktree per global parallel agent rules for isolation.)`;
       }
       txtContent += `${ctx}\n`;
       txtContent += `------------------------------------------------------------\n`;
-      
+
       const shortShortcut = repo.name === 'Starlight-Intelligence-System' ? 'clsis' :
                             repo.name === 'FrankX' ? 'clfx' :
                             repo.name === 'arcanea-ecosystem' ? 'clarc' :
                             repo.name === 'agentic-creator-os' ? 'clacos' : `cl ${repo.name}`;
-      
+
       txtContent += `- Resume Command: ${shortShortcut}\n`;
     } else {
       txtContent += `- No active session detected.\n`;
@@ -231,7 +337,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
 
   writeFileSync(txtFile, txtContent, 'utf8');
 
-  // Build HTML file content
+  const grokHtml = renderGrokHtml(grokLines);
   let htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -271,12 +377,12 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
             margin-bottom: 8px;
         }
         header p { color: var(--text-secondary); font-size: 1.1rem; }
-        
+
         .grid { display: grid; grid-template-columns: 1fr; gap: 25px; margin-bottom: 40px; }
         @media (min-width: 768px) {
             .grid { grid-template-columns: repeat(auto-fill, minmax(500px, 1fr)); }
         }
-        
+
         .card {
             background: var(--card-bg);
             border: 1px solid var(--card-border);
@@ -291,7 +397,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
         .card:hover { border-color: rgba(255, 255, 255, 0.12); }
         .card.dirty { border-left: 4px solid var(--accent-yellow); }
         .card.clean { border-left: 4px solid var(--accent-green); }
-        
+
         .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
         .repo-name { font-size: 1.25rem; font-weight: 700; color: #fff; }
         .status-badge {
@@ -302,10 +408,10 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
         }
         .status-badge.dirty { background: rgba(245, 158, 11, 0.1); color: var(--accent-yellow); border: 1px solid rgba(245, 158, 11, 0.2); }
         .status-badge.clean { background: rgba(16, 185, 129, 0.1); color: var(--accent-green); border: 1px solid rgba(16, 185, 129, 0.2); }
-        
+
         .meta-row { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 15px; }
         .meta-row div { margin-bottom: 4px; }
-        
+
         .code-box {
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.8rem;
@@ -318,7 +424,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
             word-break: break-all;
             position: relative;
         }
-        
+
         .prompt-box {
             font-size: 0.85rem;
             background: rgba(255, 255, 255, 0.02);
@@ -329,7 +435,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
             color: var(--text-secondary);
         }
         .prompt-box strong { color: #fff; display: block; margin-bottom: 5px; }
-        
+
         .btn {
             background: rgba(59, 130, 246, 0.1);
             border: 1px solid rgba(59, 130, 246, 0.2);
@@ -345,7 +451,7 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
             transition: all 0.2s;
         }
         .btn:hover { background: rgba(59, 130, 246, 0.2); color: #fff; }
-        
+
         .actions-card {
             background: rgba(59, 130, 246, 0.05);
             border: 1px solid rgba(59, 130, 246, 0.15);
@@ -362,61 +468,69 @@ export function runPrepHandover(cwd: string): { success: boolean; desktopDir: st
     <div class="container">
         <header>
             <h1>ASPH Handover Matrix</h1>
-            <p>Session checkpoint registry before system restart • Generated ${new Date().toLocaleString()}</p>
+            <p>Session registry before system restart • Generated ${new Date().toLocaleString()}</p>
         </header>
 
         <div class="actions-card">
-            <h2>⚡ Quick-Recovery Runbook</h2>
+            <h2>Quick-recovery runbook</h2>
             <ul class="actions-list">
-                <li>Run <code>git reset HEAD~1</code> in dirty repos to undo the WIP commit.</li>
-                <li>Launch the agent in the directory using the recovery commands below.</li>
-                <li>Copy the optimized continuation prompt and paste it to resume the session with complete state.</li>
+                <li>Dirty repos were left uncommitted. Read the porcelain list. Do not reset HEAD.</li>
+                <li>Resume Grok with the grok --resume lines, then paste the continuation prompt.</li>
+                <li>Verify git status before editing. Do not commit, tag, or note from this handover.</li>
             </ul>
         </div>
+        ${grokHtml}
 
         <div class="grid">`;
 
   repoAudits.forEach(repo => {
     const isDirty = repo.uncommittedCount > 0;
     const cleanLabel = isDirty ? 'dirty' : 'clean';
-    const statusText = isDirty ? `${repo.uncommittedCount} Files Saved` : 'Clean';
-    
+    const statusText = isDirty ? `${repo.uncommittedCount} uncommitted` : 'Clean';
+
     htmlContent += `
             <div class="card ${cleanLabel}">
                 <div class="card-header">
-                    <span class="repo-name">${repo.name}</span>
+                    <span class="repo-name">${escapeHtml(repo.name)}</span>
                     <span class="status-badge ${cleanLabel}">${statusText}</span>
                 </div>
                 <div class="meta-row">
-                    <div>Branch: <strong>${repo.branch}</strong></div>
-                    <div>Last commit: <code>${repo.lastCommit.slice(0, 50)}...</code></div>
+                    <div>Branch: <strong>${escapeHtml(repo.branch)}</strong></div>
+                    <div>Last commit: <code>${escapeHtml(repo.lastCommit.slice(0, 50))}</code></div>
                 </div>`;
+
+    if (isDirty) {
+      htmlContent += `
+                <div class="code-box" style="white-space: pre-wrap;">${escapeHtml(repo.uncommittedList.join('\n'))}</div>`;
+    }
 
     if (repo.activeSession) {
       const shortShortcut = repo.name === 'Starlight-Intelligence-System' ? 'clsis' :
                             repo.name === 'FrankX' ? 'clfx' :
                             repo.name === 'arcanea-ecosystem' ? 'clarc' :
                             repo.name === 'agentic-creator-os' ? 'clacos' : `cl ${repo.name}`;
-      
-      const optPrompt = `/goal [FEYNMAN ROUTE] Resume task on branch ${repo.branch}. \\nObjective: Continue working on: "${repo.activeSession.lastPrompt.replace(/"/g, '&quot;').replace(/\n/g, ' ')}".\\nContext: First run 'git reset HEAD~1' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
-      
+
+      const optPrompt = `/goal [FEYNMAN ROUTE] Resume task on branch ${repo.branch}. \nObjective: Continue working on: "${repo.activeSession.lastPrompt.replace(/\n/g, ' ')}".\nContext: Uncommitted files were left in the working tree. Verify git status before editing. Do not commit, tag, or reset as part of resuming. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
+      const optPromptHtml = escapeHtml(optPrompt).replace(/\n/g, '<br/>');
+      const optPromptJs = optPrompt.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '');
+
       htmlContent += `
                 <div class="prompt-box">
                     <strong>Continuation Prompt</strong>
                     <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; margin-top: 5px;">
-                        ${optPrompt.replace(/\\n/g, '<br/>')}
+                        ${optPromptHtml}
                     </div>
                 </div>
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <div class="code-box" style="margin: 0; flex-grow: 1;">
-                        ${shortShortcut}
+                        ${escapeHtml(shortShortcut)}
                     </div>
-                    <button class="btn" onclick="navigator.clipboard.writeText('${shortShortcut}')">Copy Command</button>
-                    <button class="btn" onclick="navigator.clipboard.writeText('${optPrompt.replace(/'/g, "\\'")}')">Copy Prompt</button>
+                    <button class="btn" onclick="navigator.clipboard.writeText('${escapeHtml(shortShortcut)}')">Copy Command</button>
+                    <button class="btn" onclick="navigator.clipboard.writeText('${optPromptJs}')">Copy Prompt</button>
                 </div>`;
     } else {
       htmlContent += `
-                <p style="color: var(--text-muted); font-size: 0.9rem; font-style: italic;">No active Claude session mapped.</p>`;
+                <p style="color: var(--text-secondary); font-size: 0.9rem; font-style: italic;">No active Claude session mapped.</p>`;
     }
 
     htmlContent += `
