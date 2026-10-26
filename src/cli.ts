@@ -225,6 +225,15 @@ switch (command) {
   }
 
   case 'prep': {
+    if (args.includes('--help') || args.includes('-h')) {
+      console.log(`
+  pp prep    Checkpoint every repository under the estate and write a reboot handover.
+
+  On main, master or a detached HEAD the checkpoint is a stash, never a commit.
+  On agent branches it commits with hooks armed. Evidence goes to ~/.starlight/asph/.
+`);
+      break;
+    }
     console.log('\n  Running Agent State Preservation & Handover (ASPH) Prep...\n');
     const result = runPrepHandover(process.cwd());
     console.log('  ✅ Repository checkpoints completed.');
