@@ -178,8 +178,10 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
         const out = runCmd(`git stash push --include-untracked -m "${tag}"`, repoPath);
         if (!/Saved working directory/.test(out)) return false;
         const sha = findStashSha(runCmd('git stash list --format=%H%x09%gs', repoPath), tag);
+        // Unverified counts as not saved, so the report never claims a checkpoint nobody can resume.
+        if (!sha) return false;
         checkpointMode = 'stash';
-        resumeCommand = sha ? `git stash apply ${sha}` : `git stash list (entry ${tag})`;
+        resumeCommand = `git stash apply ${sha}`;
         return true;
       };
 
