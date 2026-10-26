@@ -24,6 +24,8 @@ interface RepoAudit {
   path: string;
   branch: string;
   uncommittedCount: number;
+  // Legacy in-tree evidence is never checkpointed; it stays on disk and the report says so.
+  asphWipLeftOnDisk: boolean;
   uncommittedList: string[];
   lastCommit: string;
   checkpointCreated: boolean;
@@ -226,6 +228,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
       path: repoPath,
       branch,
       uncommittedCount,
+      asphWipLeftOnDisk: uncommittedList.some(l => l.includes('.asph-wip')),
       uncommittedList,
       lastCommit,
       checkpointCreated,
@@ -256,7 +259,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
     txtContent += `REPOSITORY: ${repo.name}\n`;
     txtContent += `- Path: ${repo.path}\n`;
     txtContent += `- Branch: ${repo.branch}\n`;
-    txtContent += `- Uncommitted Files: ${repo.uncommittedCount} (${repo.checkpointCreated ? `saved as ${repo.checkpointMode}; resume: ${repo.resumeCommand}${repo.checkpointSha ? ` (only while HEAD is ${repo.checkpointSha})` : ''}` : 'None'})\n`;
+    txtContent += `- Uncommitted Files: ${repo.uncommittedCount} (${repo.checkpointCreated ? `saved as ${repo.checkpointMode}; resume: ${repo.resumeCommand}${repo.checkpointSha ? ` (only while HEAD is ${repo.checkpointSha})` : ''}` : 'None'})${repo.asphWipLeftOnDisk ? '; .asph-wip/ not checkpointed, left on disk' : ''}\n`;
     txtContent += `- Last Commit: ${repo.lastCommit}\n`;
     
     if (repo.activeSession) {
@@ -440,7 +443,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
   repoAudits.forEach(repo => {
     const isDirty = repo.uncommittedCount > 0;
     const cleanLabel = isDirty ? 'dirty' : 'clean';
-    const statusText = !isDirty ? 'Clean' : repo.checkpointCreated ? `${repo.uncommittedCount} Files Saved` : `${repo.uncommittedCount} Files NOT SAVED`;
+    const statusText = !isDirty ? 'Clean' : repo.checkpointCreated ? `${repo.uncommittedCount} Files Saved${repo.asphWipLeftOnDisk ? ' (.asph-wip/ left on disk)' : ''}` :`${repo.uncommittedCount} Files NOT SAVED`;
     
     htmlContent += `
             <div class="card ${cleanLabel}">
