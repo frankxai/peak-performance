@@ -175,7 +175,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
         // Fixed message: session text never reaches the shell. The stash list is shared by every
         // worktree of a repo, so the resume command names this entry by SHA instead of popping the top.
         const tag = `asph-${ts}-${randomBytes(4).toString('hex')}`;
-        const out = runCmd(`git stash push --include-untracked -m "${tag}"`, repoPath);
+        const out = runCmd(`git stash push --include-untracked -m "${tag}" -- . ":(exclude).asph-wip"`, repoPath);
         if (!/Saved working directory/.test(out)) return false;
         const sha = findStashSha(runCmd('git stash list --format=%H%x09%gs', repoPath), tag);
         // Unverified counts as not saved, so the report never claims a checkpoint nobody can resume.
@@ -199,9 +199,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
           const leftOver = runCmd('git status --porcelain', repoPath).split('\n').filter(l => l.trim() && !l.includes('.asph-wip'));
           checkpointCreated = leftOver.length === 0;
           checkpointMode = 'commit';
-          resumeCommand = checkpointCreated
-            ? 'git reset HEAD~1 --mixed (.asph-wip/ left on disk, uncommitted)'
-            : `git reset HEAD~1 --mixed; NOT fully saved: ${leftOver.length} paths still dirty`;
+          resumeCommand = 'git reset HEAD~1 --mixed';
           runCmd(`git tag asph-wip-${ts}`, repoPath);
           const noteFile = join(evidenceDir, `note-${ts}.txt`);
           const noteContent = `ASPH WIP\nBranch: ${branch}\nObjective: ${objective}\nTouched: ${uncommittedList.slice(0,10).join(' ')}\nResume with: ${resumeCommand}\nPatch: ${join(evidenceDir, `asph-${ts}.patch`)}`;
