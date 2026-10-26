@@ -29,6 +29,8 @@ interface RepoAudit {
   checkpointCreated: boolean;
   checkpointMode: 'commit' | 'stash' | 'none';
   resumeCommand: string;
+  // Set for commit checkpoints: the reset is only right while HEAD is still this commit.
+  checkpointSha?: string;
   activeSession?: SessionData;
 }
 
@@ -160,6 +162,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
     let checkpointCreated = false;
     let checkpointMode: RepoAudit['checkpointMode'] = 'none';
     let resumeCommand = '';
+    let checkpointSha: string | undefined;
     if (uncommittedCount > 0) {
       const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0,19);
       // Evidence lives OUTSIDE the tree. A patch written into <repo>/.asph-wip/ was swept up by the
@@ -200,9 +203,10 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
           checkpointCreated = leftOver.length === 0;
           checkpointMode = 'commit';
           resumeCommand = 'git reset HEAD~1 --mixed';
+          checkpointSha = runCmd('git rev-parse HEAD', repoPath) || undefined;
           runCmd(`git tag asph-wip-${ts}`, repoPath);
           const noteFile = join(evidenceDir, `note-${ts}.txt`);
-          const noteContent = `ASPH WIP\nBranch: ${branch}\nObjective: ${objective}\nTouched: ${uncommittedList.slice(0,10).join(' ')}\nResume with: ${resumeCommand}\nPatch: ${join(evidenceDir, `asph-${ts}.patch`)}`;
+          const noteContent = `ASPH WIP\nBranch: ${branch}\nObjective: ${objective}\nTouched: ${uncommittedList.slice(0,10).join(' ')}\nResume with: ${resumeCommand} (only while HEAD is ${checkpointSha ?? 'the checkpoint commit'})\nPatch: ${join(evidenceDir, `asph-${ts}.patch`)}`;
           try { writeFileSync(noteFile, noteContent); runCmd(`git notes add -f -F "${noteFile}"`, repoPath); } catch { /* non-fatal */ }
         } else {
           runCmd('git reset -q', repoPath);
@@ -221,6 +225,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
       checkpointCreated,
       checkpointMode,
       resumeCommand,
+      checkpointSha,
       activeSession: matchedSession
     });
   }
@@ -245,7 +250,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
     txtContent += `REPOSITORY: ${repo.name}\n`;
     txtContent += `- Path: ${repo.path}\n`;
     txtContent += `- Branch: ${repo.branch}\n`;
-    txtContent += `- Uncommitted Files: ${repo.uncommittedCount} (${repo.checkpointCreated ? `saved as ${repo.checkpointMode}; resume: ${repo.resumeCommand}` : 'None'})\n`;
+    txtContent += `- Uncommitted Files: ${repo.uncommittedCount} (${repo.checkpointCreated ? `saved as ${repo.checkpointMode}; resume: ${repo.resumeCommand}${repo.checkpointSha ? ` (only while HEAD is ${repo.checkpointSha})` : ''}` : 'None'})\n`;
     txtContent += `- Last Commit: ${repo.lastCommit}\n`;
     
     if (repo.activeSession) {
@@ -258,7 +263,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
       txtContent += `------------------------------------------------------------\n`;
       txtContent += `/goal [FEYNMAN ROUTE] Resume task on branch ${repo.branch}.\n`;
       txtContent += `Objective: Continue working on: "${repo.activeSession.lastPrompt.replace(/\n/g, ' ')}".\n`;
-      let ctx = `Context: First run '${repo.resumeCommand || 'git status'}' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
+      let ctx = `Context: ${repo.checkpointSha ? `Confirm HEAD is ${repo.checkpointSha}, then run` : 'First run'} '${repo.resumeCommand || 'git status'}' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
       if (touched) ctx += ` Touched files: ${touched}.`;
       // Worktree / global protocol note for best thinkers pattern
       if (!/agent\//.test(repo.branch)) {
@@ -448,7 +453,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
                             repo.name === 'arcanea-ecosystem' ? 'clarc' :
                             repo.name === 'agentic-creator-os' ? 'clacos' : `cl ${repo.name}`;
       
-      const optPrompt = `/goal [FEYNMAN ROUTE] Resume task on branch ${repo.branch}. \\nObjective: Continue working on: "${repo.activeSession.lastPrompt.replace(/"/g, '&quot;').replace(/\n/g, ' ')}".\\nContext: First run '${repo.resumeCommand || 'git status'}' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
+      const optPrompt = `/goal [FEYNMAN ROUTE] Resume task on branch ${repo.branch}. \\nObjective: Continue working on: "${repo.activeSession.lastPrompt.replace(/"/g, '&quot;').replace(/\n/g, ' ')}".\\nContext: ${repo.checkpointSha ? `Confirm HEAD is ${repo.checkpointSha}, then run` : 'First run'} '${repo.resumeCommand || 'git status'}' to restore uncommitted files. Verify git status. Do not write speculative code. Keep edits surgical. Focus on completing the objective thoroughly.`;
       
       htmlContent += `
                 <div class="prompt-box">
