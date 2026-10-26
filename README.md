@@ -39,7 +39,7 @@ Every AI coding agent (Claude Code, Cursor, Codex, Windsurf, Devin) spawns proce
 
 ```bash
 # Run instantly (no install)
-npx @arcanea/pp audit
+npx @arcanea/peak-performance audit
 
 # Or install globally
 npm install -g @arcanea/peak-performance
@@ -60,13 +60,13 @@ A colored circle appears in your system tray showing your score. Green = healthy
 
 ```bash
 # Claude Code
-claude mcp add peak-performance -- npx @arcanea/pp --mcp
+claude mcp add peak-performance -- npx @arcanea/peak-performance --mcp
 
 # Or in .mcp.json
 {
   "peak-performance": {
     "command": "npx",
-    "args": ["@arcanea/pp", "--mcp"]
+    "args": ["@arcanea/peak-performance", "--mcp"]
   }
 }
 ```
@@ -318,7 +318,7 @@ cd peak-performance
 
 # TypeScript CLI
 npm install
-npx tsx src/cli.ts audit
+npm run pp:audit
 
 # Python tray
 cd tray
