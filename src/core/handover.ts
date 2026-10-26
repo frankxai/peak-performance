@@ -194,9 +194,14 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
         // refuses, the work is still preserved by the stash below.
         const commitOut = runCmd('git commit -m "wip: pre-reboot checkpoint (ASPH)"', repoPath);
         if (commitOut) {
-          checkpointCreated = true;
+          // .asph-wip/ is excluded on purpose (legacy in-tree evidence, the origin of the 216 MB blobs)
+          // and stays on disk; anything else still dirty means the checkpoint is partial.
+          const leftOver = runCmd('git status --porcelain', repoPath).split('\n').filter(l => l.trim() && !l.includes('.asph-wip'));
+          checkpointCreated = leftOver.length === 0;
           checkpointMode = 'commit';
-          resumeCommand = 'git reset HEAD~1 --mixed';
+          resumeCommand = checkpointCreated
+            ? 'git reset HEAD~1 --mixed (.asph-wip/ left on disk, uncommitted)'
+            : `git reset HEAD~1 --mixed; NOT fully saved: ${leftOver.length} paths still dirty`;
           runCmd(`git tag asph-wip-${ts}`, repoPath);
           const noteFile = join(evidenceDir, `note-${ts}.txt`);
           const noteContent = `ASPH WIP\nBranch: ${branch}\nObjective: ${objective}\nTouched: ${uncommittedList.slice(0,10).join(' ')}\nResume with: ${resumeCommand}\nPatch: ${join(evidenceDir, `asph-${ts}.patch`)}`;
