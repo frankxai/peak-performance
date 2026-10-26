@@ -242,7 +242,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
   txtContent += `RECOVERY ACTIONS:\n`;
   txtContent += `1. Reboot machine to clean RAM and close active processes.\n`;
   txtContent += `2. Open terminal in each repo directory.\n`;
-  txtContent += `3. In each dirty repo run the resume command listed below ('git stash apply <sha>' for stashes, 'git reset HEAD~1' on agent branches).\n`;
+  txtContent += `3. In each dirty repo run the resume command listed below ('git stash apply <sha>' for stashes, 'git reset HEAD~1' on agent branches only while HEAD is still the checkpoint SHA listed for that repo).\n`;
   txtContent += `4. Start agents using resume commands and prompts below.\n\n`;
   txtContent += `======================================================================\n\n`;
 
@@ -423,7 +423,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
         <div class="actions-card">
             <h2>⚡ Quick-Recovery Runbook</h2>
             <ul class="actions-list">
-                <li>Run the resume command shown per repo (<code>git stash apply &lt;sha&gt;</code> for stashes, <code>git reset HEAD~1</code> on agent branches).</li>
+                <li>Run the resume command shown per repo (<code>git stash apply &lt;sha&gt;</code> for stashes, <code>git reset HEAD~1</code> on agent branches only while HEAD is still the checkpoint SHA shown for that repo).</li>
                 <li>Launch the agent in the directory using the recovery commands below.</li>
                 <li>Copy the optimized continuation prompt and paste it to resume the session with complete state.</li>
             </ul>
@@ -440,7 +440,7 @@ export function runPrepHandover(cwd: string): { success: boolean; unsaved: strin
             <div class="card ${cleanLabel}">
                 <div class="card-header">
                     <span class="repo-name">${repo.name}</span>
-                    <span class="status-badge ${cleanLabel}">${statusText}</span>
+                    <span class="status-badge ${cleanLabel}">${statusText}</span>${repo.checkpointCreated ? `<code>${repo.resumeCommand}${repo.checkpointSha ? ` (only while HEAD is ${repo.checkpointSha})` : ''}</code>` : ''}
                 </div>
                 <div class="meta-row">
                     <div>Branch: <strong>${repo.branch}</strong></div>
