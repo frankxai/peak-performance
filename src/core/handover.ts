@@ -51,8 +51,10 @@ export function findStashSha(list: string, tag: string): string {
 
 // A `git status --porcelain` line whose path is the top-level .asph-wip/ evidence folder. The status
 // code may have lost its leading space to trimming, so match the path after it, not a fixed column.
+// A rename (`R  old -> new`) counts only when both paths are inside the folder.
 export function isAsphWipLine(line: string): boolean {
-  return /^\s*\S{1,2}\s+"?\.asph-wip(\/|"?$)/.test(line);
+  const paths = line.replace(/^\s*\S{1,2}\s+/, '').split(' -> ');
+  return paths.every(p => /^"?\.asph-wip(\/|"?$)/.test(p));
 }
 
 // Prompts, commit subjects and branch names are untrusted text; the report is opened in a browser.

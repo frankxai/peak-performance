@@ -29,10 +29,10 @@ test('escapeHtml neutralises markup from prompts and commit subjects', () => {
 });
 
 test('isAsphWipLine matches only the top-level .asph-wip folder', () => {
-  for (const l of ['?? .asph-wip/', ' M .asph-wip/patch.diff', 'M .asph-wip/a', 'A  ".asph-wip/x y"']) {
+  for (const l of ['?? .asph-wip/', ' M .asph-wip/patch.diff', 'M .asph-wip/a', 'A  ".asph-wip/x y"', 'R  .asph-wip/a -> .asph-wip/b']) {
     assert.equal(isAsphWipLine(l), true, l);
   }
-  for (const l of [' M notes.asph-wip.txt', '?? docs/.asph-wip/', ' M src/app.ts', '?? .asph-wipe/']) {
+  for (const l of [' M notes.asph-wip.txt', '?? docs/.asph-wip/', ' M src/app.ts', '?? .asph-wipe/', 'R  .asph-wip/a -> notes.txt']) {
     assert.equal(isAsphWipLine(l), false, l);
   }
 });
