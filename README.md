@@ -82,7 +82,7 @@ Exposes three tools: `pp_audit`, `pp_trend`, `pp_fix`.
 | `pp audit --md` | Markdown output for reports |
 | `pp audit --plain` | Generic names instead of Arcanea gates |
 | `pp trend [N]` | Show last N score entries with delta |
-| `pp fix` | Run auto-fixable repairs (npm cache, temp files) |
+| `pp fix` | Review held cleanup plans; no automatic deletion |
 | `pp compact` | One-line status: `PP 80/A- 3WARN` |
 | `pp inspect [--all|--json]` | Process census with memory, command, role, reasoning, and protected-process classification |
 | `pp watch [--seconds N] [--interval N] [--log path]` | Bounded process start/stop ledger for Starlight/JarvisOps ingestion |
@@ -150,17 +150,21 @@ The Python tray app (`tray/`) provides always-on monitoring:
 |---|----|----|----|----|---|
 | Green | Green | Cyan | Yellow | Orange | Red |
 
-## Auto-Fix
+## Cleanup review
 
-`pp fix` runs safe, reversible repairs:
+`pp fix` and the `pp_fix` MCP tool return cleanup proposals with execution held.
+They never delete npm caches, remove Temp files by age, or execute a cleanup
+command. A proposal always reports `success: false` and `executionPermitted: false`.
 
-- `npm cache clean --force` — frees GB of cached packages
-- Clean temp files older than 3 days
-- More fixes coming (git gc, cache cleanup, and supervised maintenance tasks)
+Before reclaiming anything, establish its exact owner, active writers, recovery
+path and explicit approval through the existing machine contract. The legacy
+`cleanNpmCache` and `cleanTempFiles` exports remain callable as held plans.
+The MCP `dryRun` option is retained for compatibility; `false` does not permit
+execution. Each request audits once and reports no invented before/after gain.
 
-Before/after score comparison is shown automatically.
-
-`pp fix` does not kill user-owned processes. Use `pp inspect` first, then write a process action receipt before terminating anything ambiguous or user-facing.
+Chrome, Edge, Brave and Comet roots and renderer children are protected. A vendor
+executable containing the word `system` remains protected pending ownership
+inspection; its name alone does not establish that it is an OS component.
 
 ## Process Inspection
 
