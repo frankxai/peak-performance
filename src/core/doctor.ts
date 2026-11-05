@@ -47,18 +47,12 @@ export function diagnose(audit: AuditResult): Diagnosis[] {
       explanation:
         `${agentCount} AI agents are consuming ~${estMB}MB (${agents.metrics['agentPct']}% of RAM). ` +
         `When RAM exceeds 85%, Windows uses the page file (disk swap), which further reduces disk space ` +
-        `and slows everything down. This is the #1 cause of AI dev machine crashes.`,
+        `and slows everything down. Confirm task ownership before closing any process.`,
       actions: [
-        {
-          action: `Close ${Math.max(0, agentCount - 4)} agent instances (keep 4 max)`,
-          estimatedImpact: `+${Math.round((agentCount - 4) * 450)}MB RAM, +${Math.round((agentCount - 4) * 0.5)}GB disk`,
-          effort: '1min',
-        },
-        {
-          action: 'Close browser tabs you\'re not actively using',
-          estimatedImpact: '+200-500MB RAM',
-          effort: 'instant',
-        },
+        { action: 'Have owners checkpoint and close confirmed completed task trees; preserve unfinished work',
+          estimatedImpact: 'Unmeasured until exact live ownership is established', effort: '5min', command: 'pp inspect --all --json' },
+        { action: 'Keep signed-in browsers open; browser closure requires owner approval',
+          estimatedImpact: 'Preserves active sessions and foreground work', effort: 'instant' },
       ],
     });
   }
@@ -67,25 +61,11 @@ export function diagnose(audit: AuditResult): Diagnosis[] {
   if (disk && disk.score <= 4) {
     const freeGB = Number(disk.metrics['freeGB'] ?? 0);
     const actions: DiagnosticAction[] = [
-      { action: 'Clean npm cache', estimatedImpact: '+2-5GB', effort: '1min', command: 'npm cache clean --force' },
+      { action: 'Review exact cache and generated-output ownership, current writers and recovery before proposing reclaim',
+        estimatedImpact: 'Unmeasured until an exact inventory and approval', effort: '5min', command: 'pp fix' },
+      { action: 'Preserve unfinished work and retained evidence; use the existing machine admission contract',
+        estimatedImpact: 'Prevents unapproved or unsafe reclaim', effort: '5min' },
     ];
-
-    if (workspace && workspace.score < 10) {
-      const tempCount = Number(workspace.metrics['tempFiles'] ?? 0);
-      if (tempCount > 5000) {
-        actions.push({
-          action: `Clean ${tempCount} temp files (older than 3 days)`,
-          estimatedImpact: '+0.5-2GB',
-          effort: '1min',
-          command: 'pp fix',
-        });
-      }
-    }
-
-    actions.push(
-      { action: 'Delete .next build caches', estimatedImpact: '+1-3GB', effort: 'instant', command: 'rm -rf .next apps/web/.next' },
-      { action: 'Run git gc', estimatedImpact: '+100-500MB', effort: '5min', command: 'git gc --aggressive --prune=now' },
-    );
 
     diagnoses.push({
       rootCause: 'Disk space critical',
@@ -108,20 +88,16 @@ export function diagnose(audit: AuditResult): Diagnosis[] {
 
     if (ratio > 10) {
       diagnoses.push({
-        rootCause: 'Orphan node processes',
+        rootCause: 'Process fanout needs ownership review',
         affectedGates: ['processes', 'memory'],
         severity: ratio > 20 ? 'serious' : 'moderate',
         explanation:
-          `${nodeCount} node processes for ${agentCount} AI agents (${ratio}:1 ratio). ` +
-          `Healthy ratio is 3-5:1. The excess are likely orphaned dev servers, MCP servers, ` +
-          `or build watchers that didn't clean up when their parent agent closed.`,
+          `${nodeCount} node processes for ${agentCount} named AI agents (${ratio}:1 ratio). ` +
+          'Counts do not prove that a process is idle or abandoned. Inspect actual parents and task ownership.',
         actions: [
-          {
-            action: 'Review and kill orphan node processes',
-            estimatedImpact: `+${Math.round((nodeCount - agentCount * 5) * 20)}MB RAM`,
-            effort: '5min',
-            command: 'tasklist /fi "imagename eq node.exe" (Windows) | review and taskkill orphans',
-          },
+          { action: 'Have owners checkpoint and close only confirmed completed task trees; preserve unfinished tasks',
+            estimatedImpact: 'Unmeasured until exact live ownership and working sets are checked', effort: '5min',
+            command: 'pp inspect --all --json' },
         ],
       });
     }

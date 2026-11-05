@@ -7,7 +7,7 @@
  *   pp audit --md      Markdown output
  *   pp audit --plain   Use plain names instead of Arcanea gates
  *   pp trend           Show score history
- *   pp fix             Run auto-fixes
+ *   pp fix             Review held cleanup plans
  *   pp compact         One-line status for hooks/statusline
  *   pp inspect         Process census and top memory consumers
  *   pp watch           Bounded process start/stop ledger
@@ -100,28 +100,19 @@ switch (command) {
 
   case 'fix': {
     const audit = runAudit({ cwd: process.cwd() });
-    const fixable = audit.recommendations.filter(r => r.autoFixable);
+    const results = runAllFixes(audit.recommendations);
 
-    if (fixable.length === 0) {
-      console.log('\n  No auto-fixable issues found.\n');
+    if (results.length === 0) {
+      console.log('\n  No cleanup proposals require review.\n');
       break;
     }
 
-    console.log(`\n  Running ${fixable.length} auto-fixes...\n`);
-    const results = runAllFixes(audit.recommendations);
+    console.log(`\n  Reviewing ${results.length} cleanup plans; execution is held.\n`);
 
     for (const r of results) {
-      const icon = r.success ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
-      console.log(`  ${icon} ${r.recommendation.message}`);
-      if (r.output) console.log(`    \x1b[90m${r.output.slice(0, 100)}\x1b[0m`);
+      console.log(`  Held: ${r.recommendation.message}`);
+      if (r.output) console.log(`    ${r.output}`);
     }
-
-    // Re-audit after fixes
-    console.log('\n  Re-auditing...\n');
-    const after = runAudit({ cwd: process.cwd() });
-    const delta = after.totalScore - audit.totalScore;
-    const color = delta > 0 ? '\x1b[32m' : '\x1b[90m';
-    console.log(`  Before: ${audit.totalScore}/${audit.grade} → After: ${color}${after.totalScore}/${after.grade}\x1b[0m (+${delta} points)\n`);
     break;
   }
 
@@ -257,7 +248,7 @@ switch (command) {
     pp audit [--json|--md|--plain]   Full system audit
     pp doctor                        Diagnose root causes + action plan
     pp trend [N]                     Show last N score entries
-    pp fix                           Run auto-fixes
+    pp fix                           Review held cleanup plans; no deletion
     pp compact                       One-line status
     pp inspect [--all|--json]        Process census + top memory consumers
     pp watch [--seconds N]           Bounded process start/stop ledger

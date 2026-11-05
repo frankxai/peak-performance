@@ -50,9 +50,9 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
   if (disk.freeGB < 20) {
     recommendations.push({
       priority: 'urgent', gate: 'disk',
-      message: `Only ${disk.freeGB}GB disk free — run: npm cache clean --force`,
+      message: `Only ${disk.freeGB}GB disk free; review cache ownership and an exact approved reclaim plan`,
       fix: 'npm-cache-clean',
-      autoFixable: true,
+      autoFixable: false,
     });
   }
 
@@ -91,9 +91,9 @@ export function runAudit(config: Partial<PPConfig> = {}): AuditResult {
   if (temp.fileCount > 10000) {
     recommendations.push({
       priority: 'medium', gate: 'workspace',
-      message: `${temp.fileCount} temp files — consider cleanup`,
+      message: `${temp.fileCount} temp files; review ownership and current writers before proposing reclaim`,
       fix: os.platform() === 'win32' ? 'temp-clean-win' : 'temp-clean-unix',
-      autoFixable: true,
+      autoFixable: false,
     });
   }
 

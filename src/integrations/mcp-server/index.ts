@@ -50,11 +50,11 @@ const TOOLS = [
   },
   {
     name: 'pp_fix',
-    description: 'Run auto-fixable remediation (clean npm cache, temp files, etc). Returns before/after comparison.',
+    description: 'Return held cleanup review plans. Never deletes files or executes remediation.',
     inputSchema: {
       type: 'object',
       properties: {
-        dryRun: { type: 'boolean', default: false, description: 'Show what would be fixed without doing it' },
+        dryRun: { type: 'boolean', default: true, description: 'Compatibility option; every request is read-only, including false' },
       },
     },
   },
@@ -133,26 +133,9 @@ function handleRequest(method: string, params: Record<string, unknown> | undefin
         }
 
         case 'pp_fix': {
-          const before = runAudit({ cwd: process.cwd() });
-
-          if (args.dryRun) {
-            const fixable = before.recommendations.filter(r => r.autoFixable);
-            const text = fixable.length > 0
-              ? fixable.map(r => `Would fix: ${r.message}\n  $ ${r.fix}`).join('\n\n')
-              : 'No auto-fixable issues found.';
-            respond(id, { content: [{ type: 'text', text }] });
-            break;
-          }
-
-          const results = runAllFixes(before.recommendations);
-          const after = runAudit({ cwd: process.cwd() });
-
-          const text = [
-            `Fixed ${results.filter(r => r.success).length}/${results.length} issues`,
-            `Before: ${before.totalScore}/${before.grade}`,
-            `After: ${after.totalScore}/${after.grade}`,
-            `Delta: ${after.totalScore - before.totalScore > 0 ? '+' : ''}${after.totalScore - before.totalScore} points`,
-          ].join('\n');
+          const audit = runAudit({ cwd: process.cwd() });
+          const plans = runAllFixes(audit.recommendations);
+          const text = JSON.stringify({ mode: 'review-only', executionPermitted: false, plans }, null, 2);
 
           respond(id, { content: [{ type: 'text', text }] });
           break;
