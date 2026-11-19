@@ -1,0 +1,15 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "peak-performance",
+  "displayName": "Peak Performance",
+  "version": "0.1.0",
+  "description": "Diagnose workstation pressure and qualify storage recovery with local evidence, scoped actions and preservation checks.",
+  "author": { "name": "FrankX" },
+  "repository": "https://github.com/frankxai/peak-performance",
+  "license": "MIT",
+  "suggestedPrompts": [
+    "Measure this workstation and identify its largest performance constraint.",
+    "Review disk usage and prepare the highest-value safe recovery batch."
+  ],
+  "keywords": ["developer-tools", "workstation", "storage", "performance"]
+}

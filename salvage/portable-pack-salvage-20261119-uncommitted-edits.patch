@@ -1,0 +1,38 @@
+diff --git a/README.md b/README.md
+index 5100489..bb9b5de 100644
+--- a/README.md
++++ b/README.md
+@@ -2,13 +2,20 @@
+ 
+ **System health auditor for AI-powered development machines.**
+ 
++> Portable workstation pack: a local, unreleased skills-only candidate now lives in
++> `skills/`, with portable, Claude and Antigravity manifests. It does not install
++> the CLI, start servers or authorize cleanup on load. Read the
++> [product plan](docs/PORTABLE-WORKSTATION-PRODUCT.md) and
++> [knowledge base](knowledge/README.md) for scope, known runtime gaps and release
++> gates. No official-directory approval or public plugin release is claimed.
++
+ Your machine runs Claude, Cursor, Codex, and dozens of Node processes simultaneously. Peak Performance monitors everything and tells you — in one number — whether your system can handle more or needs relief.
+ 
+ ```
+ $ pp audit
+ 
+   Peak Performance Audit
+-  2026-04-04T01:54:03Z | DESKTOP-1B4ICID | win32
++  2026-04-04T01:54:03Z | DEV-WORKSTATION | win32
+ 
+   Score: 80/100 | Grade: A-
+ 
+diff --git a/package.json b/package.json
+index bebef53..d208931 100644
+--- a/package.json
++++ b/package.json
+@@ -14,6 +14,7 @@
+   ],
+   "homepage": "https://github.com/frankxai/peak-performance#readme",
+   "scripts": {
++    "validate:pack": "node scripts/validate-portable-pack.mjs",
+     "build": "tsc",
+     "dev": "tsc --watch",
+     "test": "node --import tsx --test src/**/*.test.ts",
