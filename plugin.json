@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "peak-performance",
+  "version": "0.1.0",
+  "description": "Diagnose workstation pressure and qualify storage recovery with local evidence, scoped actions and preservation checks.",
+  "author": { "name": "FrankX" },
+  "repository": "https://github.com/frankxai/peak-performance",
+  "license": "MIT",
+  "keywords": ["developer-tools", "workstation", "storage", "performance"],
+  "extensions": {
+    "com.openai": { "requires_local_executor": true }
+  }
+}
